@@ -1,4 +1,4 @@
-<img width="800" height="500" alt="end-ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/e573f46d-0317-442f-8b5b-37f0fe0d06f1" /># Gin-Rummy
+# Gin-Rummy
 The gin rummy game implemented using the LÖVE engine.
 
 Build:
@@ -22,4 +22,4 @@ Game Recordings:
 
 <img width="800" height="504" alt="" src="https://github.com/user-attachments/assets/e45d9b4a-3ac7-49d7-ae3e-0c80f20cbe7d" />
 
-<img width="800" height="500" alt="end-ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/79b903ba-76f2-4033-a461-7de11d8f9e95" />
+<img width="800" height="500" alt="end" src="https://github.com/user-attachments/assets/79b903ba-76f2-4033-a461-7de11d8f9e95" />
