@@ -100,5 +100,31 @@ vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screenPos)
 ]])
 
 
+lamp_shader = love.graphics.newShader([[
+extern number time;
+extern number is_on;
+extern vec3 lamp_color;
 
-return dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader
+vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
+{
+    vec2 uv = texture_coords * 2.0 - 1.0;
+    float dist = length(uv);
+
+    float pulse = 0.85 + 0.15 * sin(time * 1.0);
+
+    float body = 1.0 - smoothstep(0.32, 0.4, dist);
+    float glow = (1.0 - smoothstep(0.35, 1.0, dist)) * is_on * pulse;
+    float highlight = (1.0 - smoothstep(0.0, 0.22, length(uv - vec2(-0.12, -0.16)))) * is_on;
+
+    vec3 offColor = vec3(0.22, 0.18, 0.14);
+    vec3 onColor = lamp_color * pulse;
+
+    vec3 col = mix(offColor, onColor, is_on) + highlight * 0.6;
+    float alpha = clamp(body + glow * 0.5, 0.0, 1.0);
+
+    return vec4(col, alpha) * color;
+}
+]])
+
+
+return dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader, lamp_shader

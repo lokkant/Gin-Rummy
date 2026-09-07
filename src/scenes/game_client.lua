@@ -21,6 +21,7 @@ local player_hand
 local opponent_hand
 local back_card_texture
 local deck_texture
+local white_pixel
 local dragging_card
 local drag_offset_x
 local drag_offset_y
@@ -40,6 +41,9 @@ local KNOCK_BUTTON_WIDTH = 140
 local KNOCK_BUTTON_HEIGHT = 50
 local knock_button_x
 local knock_button_y
+
+local LAMP_RADIUS = 16
+local MAX_HAND_CARDS = 11
 
 local is_my_turn = false
 local is_game_over = false
@@ -105,6 +109,10 @@ function Scene.load(ip)
     back_card_texture:setFilter("nearest", "nearest")
     card_slot_texture:setFilter("nearest", "nearest")
     deck_texture:setFilter("nearest", "nearest")
+
+    local pixel_data = love.image.newImageData(1, 1)
+    pixel_data:setPixel(0, 0, 1, 1, 1, 1)
+    white_pixel = love.graphics.newImage(pixel_data)
 
     update_hand_positions(love.graphics.getHeight())
 
@@ -175,6 +183,28 @@ local function copy(original)
     return copy_t
 end
 
+local function get_lamp_x()
+    local card_width = back_card_texture:getWidth() * scale
+    local max_hand_half_width = (card_width / 1.5) * MAX_HAND_CARDS / 2 + card_width / 2
+    return love.graphics.getWidth() / 2 - max_hand_half_width - LAMP_RADIUS * scale - 30 * scale
+end
+
+local LAMP_GLOW_SCALE = 2
+
+local function draw_turn_lamp(cx, cy, is_on)
+    local radius = LAMP_RADIUS * scale
+    local half = radius * LAMP_GLOW_SCALE
+
+    love.graphics.setShader(lamp_shader)
+    lamp_shader:send("time", love.timer.getTime())
+    lamp_shader:send("is_on", is_on and 1 or 0)
+    lamp_shader:send("lamp_color", {1, 0.75, 0.15})
+
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(white_pixel, cx - half, cy - half, 0, half * 2, half * 2)
+
+    love.graphics.setShader()
+end
 
 local function handle_message(message)
     if message.type == "is_my_turn" then
@@ -583,12 +613,15 @@ function Scene.draw()
     )
 
     love.graphics.setShader()
-
     love.graphics.setColor(1, 1, 1, 1)
 
     deck:draw()
 
     discard_pile:draw()
+
+    local lamp_x = get_lamp_x()
+    draw_turn_lamp(lamp_x, OPPONENT_Y_POSITION + CARD_HEIGHT / 2, not is_my_turn and not is_game_over)
+    draw_turn_lamp(lamp_x, HAND_Y_POSITION + CARD_HEIGHT / 2, is_my_turn)
 
     player_hand:draw(dragging_card, hovered_card)
 
