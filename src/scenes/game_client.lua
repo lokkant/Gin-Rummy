@@ -571,10 +571,6 @@ end
 
 
 function Scene.draw()
-    -- love.graphics.setShader(backgorund_shader)
-
-    -- backgorund_shader:send("time", love.timer.getTime())
-
     -- poker table color
     love.graphics.setColor(love.math.colorFromBytes(53, 101, 77, 255))
 
@@ -605,15 +601,6 @@ function Scene.draw()
     end
 
     opponent_hand:draw()
-
-    if dragging_card ~= nil then
-        love.graphics.setShader(dragging_card_shader)
-        dragging_card_shader:send("time", love.timer.getTime())
-
-        dragging_card:draw(true)
-
-        love.graphics.setShader()
-    end
 
     local knock_available = is_knock_available()
     if knock_available then

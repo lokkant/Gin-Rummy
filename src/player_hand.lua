@@ -133,6 +133,13 @@ function PlayerHand(x, y)
                     card:draw(true)
 
                     love.graphics.setShader(highlight_card_shader)
+                elseif card == dragging_card then
+                    love.graphics.setShader(dragging_card_shader)
+                    dragging_card_shader:send("time", love.timer.getTime())
+
+                    card:draw(true)
+
+                    love.graphics.setShader(highlight_card_shader)
                 end
                 count = count + 1
             end
@@ -152,6 +159,13 @@ function PlayerHand(x, y)
                 card:draw(true)
 
                 love.graphics.setShader(card_shader)
+            elseif card == dragging_card then
+                love.graphics.setShader(dragging_card_shader)
+                dragging_card_shader:send("time", love.timer.getTime())
+
+                card:draw(true)
+
+                love.graphics.setShader(highlight_card_shader)
             end
         end
 
