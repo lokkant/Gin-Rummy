@@ -108,7 +108,7 @@ function Scene.load(ip)
     local card_slot_texture = love.graphics.newImage("assets/card_slot.png")
     deck_texture = love.graphics.newImage("assets/deck.png")
 
-    back_card_texture:setFilter("nearest", "nearest")
+    back_card_texture:setFilter("linear", "linear")
     card_slot_texture:setFilter("nearest", "nearest")
     deck_texture:setFilter("nearest", "nearest")
 
