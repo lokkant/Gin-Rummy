@@ -18,17 +18,50 @@ function PlayerHand(x, y)
     self.score = 0
 
 
+    function self:get_rest_position(i)
+        local card = self.cards[i]
+        local width = card:get_width() / 1.5
+        local total_width = width * #self.cards
+        local target_x = self.x - total_width / 2 + (i - 1) * width
+
+        local center_index = (#self.cards + 1) / 2
+        local distance_from_center = math.abs(i - center_index)
+        local fan_offset = (distance_from_center / math.max(#self.cards / 2, 1)) * 20
+
+        return target_x, self.y + fan_offset
+    end
+
+
+    function self:get_card_at(x, y, hovered_card)
+        for i = #self.cards, 1, -1 do
+            local card = self.cards[i]
+            local rx, ry = self:get_rest_position(i)
+            local w, h = card:get_width(), card:get_height()
+            if x >= rx and x <= rx + w and y >= ry and y <= ry + h then
+                return card
+            end
+        end
+
+        if hovered_card ~= nil then
+            for i, card in ipairs(self.cards) do
+                if card == hovered_card then
+                    local rx, ry = self:get_rest_position(i)
+                    local lift = card:get_height() / 6
+                    if x >= rx and x <= rx + card:get_width() and y >= ry - lift and y < ry then
+                        return card
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
+
     function self:update(dt, speed, dragging_card, hovered_card)
         for i, card in ipairs(self.cards) do
             if card ~= dragging_card then
-                local width = card:get_width() / 1.5
-                local total_width = width * #self.cards
-                local target_x = self.x - total_width / 2 + (i - 1) * width
-
-                local center_index = (#self.cards + 1) / 2
-                local distance_from_center = math.abs(i - center_index)
-                local fan_offset = (distance_from_center / math.max(#self.cards / 2, 1)) * 20
-                local target_y = self.y + fan_offset
+                local target_x, target_y = self:get_rest_position(i)
 
                 if card == hovered_card then
                     target_y = target_y - card:get_height() / 6

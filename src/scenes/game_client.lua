@@ -504,10 +504,6 @@ function Scene.keypressed(key)
 end
 
 function Scene.mousemoved(x, y, dx, dy)
-    if hovered_card ~= nil and not hovered_card:mousehover(x, y) then
-            hovered_card = nil
-    end
-
     if dragging_card then
         dragging_card:set_position(x - drag_offset_x, y - drag_offset_y)
     end
@@ -566,16 +562,10 @@ function Scene.update(dt)
 
     process_next_queued_message()
 
-    -- find hovered card
-    if not dragging_card then
-        local mx, my = love.mouse.getPosition()
-        for i = #player_hand.cards, 1, -1 do
-            local card = player_hand.cards[i]
-            if card:mousepressed(mx, my, 1) then
-                hovered_card = card
-                break
-            end
-        end
+    if dragging_card then
+        hovered_card = nil
+    else
+        hovered_card = player_hand:get_card_at(mx, my, hovered_card)
     end
 
     -- get message from server

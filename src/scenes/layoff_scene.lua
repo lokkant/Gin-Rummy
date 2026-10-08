@@ -83,6 +83,7 @@ local function compute_layout()
 
             card.target_x = start_x + (i - 1) * overlap
             card.target_y = target_y
+            card.rest_y = hand_y
         end
     end
 
@@ -204,19 +205,34 @@ function Scene.mousemoved(x, y, dx, dy)
     end
 end
 
+
+local function get_hand_card_at(x, y, current)
+    for i = #my_cards, 1, -1 do
+        local card = my_cards[i]
+        if card.target_x and card.rest_y and
+           x >= card.target_x and x <= card.target_x + card:get_width() and
+           y >= card.rest_y and y <= card.rest_y + card:get_height() then
+            return card
+        end
+    end
+
+    if current and current.target_x and current.rest_y then
+        local lift = current:get_height() / 6
+        if x >= current.target_x and x <= current.target_x + current:get_width() and
+           y >= current.rest_y - lift and y < current.rest_y then
+            return current
+        end
+    end
+
+    return nil
+end
+
 function Scene.update(dt)
     if finished then return end
 
     if dragging_card == nil then
         local mx, my = love.mouse.getPosition()
-        hovered_card = nil
-        for i = #my_cards, 1, -1 do
-            local card = my_cards[i]
-            if card:mousehover(mx, my) then
-                hovered_card = card
-                break
-            end
-        end
+        hovered_card = get_hand_card_at(mx, my, hovered_card)
     else
         hovered_card = nil
     end
