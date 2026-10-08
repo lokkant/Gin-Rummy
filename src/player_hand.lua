@@ -165,7 +165,7 @@ function PlayerHand(x, y)
 
                 card:draw(true)
 
-                love.graphics.setShader(highlight_card_shader)
+                love.graphics.setShader(card_shader)
             end
         end
 
