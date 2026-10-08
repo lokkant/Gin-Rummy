@@ -91,6 +91,8 @@ function Scene.load(ip)
     server = host:connect(ip)
 
     pending_messages = {}
+    movable_card_from_opponent_to_discard_pile = nil
+    new_card_in_discard_pile = nil
     knock_discard_anim = nil
     knock_pause_timer = 0
     flash_pending = false
@@ -309,6 +311,10 @@ local function is_busy()
     return knock_discard_anim ~= nil or knock_pause_timer > 0 or round_result_timer > 0 or flash_pending
 end
 
+local function is_discard_pile_updating()
+    return movable_card_from_opponent_to_discard_pile ~= nil or new_card_in_discard_pile ~= nil
+end
+
 local function process_next_queued_message()
     if is_busy() or #pending_messages == 0 then return end
 
@@ -460,7 +466,7 @@ function Scene.mousepressed(x, y, button)
         server:send(json.encode({type = "get_card_from_deck"}))
     -- take card from discard pile
     elseif discard_pile:mousepressed(x, y, button) then
-        if is_my_turn and #player_hand.cards == 10 then
+        if is_my_turn and #player_hand.cards == 10 and not is_discard_pile_updating() then
             local card = discard_pile:remove_top_card()
             if card ~= nil then
                 player_hand:add_card(card)
