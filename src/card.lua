@@ -33,20 +33,6 @@ function Card(rank, suit, x, y, texture, scaleX, scaleY)
         end
     end
 
-    function self:draw_with_offset(offsetX, offsetY, is_wobble)
-        if is_wobble and WOBBLE_ENABLED then
-            local t = love.timer.getTime() * WOBBLE_SPEED + self.wobble_seed
-            local angle = math.sin(t) * WOBBLE_ANGLE
-            local bob = math.sin(t * 2) * WOBBLE_BOB
-            local w, h = self.texture:getWidth(), self.texture:getHeight()
-
-            love.graphics.draw(self.texture, self.x + w * self.scaleX / 2 + offsetX, self.y + h * self.scaleY / 2 + bob + offsetY,
-                angle, self.scaleX, self.scaleY, w / 2, h / 2)
-        else
-            love.graphics.draw(self.texture, self.x + offsetX, self.y + offsetY, 0, self.scaleX, self.scaleY)
-        end
-    end
-
     function self:mousepressed(x, y, button)
         if x >= self.x and x <= self.x + self.texture:getWidth() * self.scaleX and
            y >= self.y and y <= self.y + self.texture:getHeight() * self.scaleY then
