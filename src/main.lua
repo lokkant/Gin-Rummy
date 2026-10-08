@@ -5,6 +5,8 @@ local BASE_SCALE = 2.6
 local REFERENCE_WIDTH = 1920
 local REFERENCE_HEIGHT = 1080
 
+ASSET_RESOLUTION_FACTOR = 3
+
 local function update_scale()
     if not love.graphics then return end
     local w, h = love.graphics.getDimensions()
