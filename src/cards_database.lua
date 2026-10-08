@@ -19,9 +19,10 @@ end
 function get_card(name)
     local texture_path = string.format("assets/cards/%s.png", name)
     local texture = love.graphics.newImage(texture_path)
-    texture:setFilter("nearest", "nearest")
+    texture:setFilter("linear", "linear")
     local rank, suit = string.match(name, "([%w]+)_([%a]+)")
-    return Card(rank, suit, 0, 0, texture, 1, 1)
+    local card_scale = scale / ASSET_RESOLUTION_FACTOR
+    return Card(rank, suit, 0, 0, texture, card_scale, card_scale)
 end
 
 function get_card_data(name)

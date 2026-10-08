@@ -118,19 +118,19 @@ function Scene.load(ip)
 
     update_hand_positions(love.graphics.getHeight())
 
-    deck = Deck(100, 0, deck_texture, scale, scale)
-    discard_pile = DiscardPile(0, 0, card_slot_texture, scale, scale)
+    deck = Deck(100, 0, deck_texture, scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
+    discard_pile = DiscardPile(0, 0, card_slot_texture, scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
     player_hand = PlayerHand(love.graphics.getWidth() / 2, HAND_Y_POSITION)
     opponent_hand = OpponentHand(love.graphics.getWidth() / 2, OPPONENT_Y_POSITION)
-    opponent_card_reference = Card("A", "heart", 0, 0, back_card_texture, scale, scale)
+    opponent_card_reference = Card("A", "heart", 0, 0, back_card_texture, scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
 
     -- set discard pile in the center
     discard_pile.x = love.graphics.getWidth() / 2 - discard_pile:get_width() / 2
     discard_pile.y = love.graphics.getHeight() / 2 - discard_pile:get_heigth() / 2
 
-    deck.y = love.graphics.getHeight() / 2 - deck_texture:getHeight() * scale / 2
+    deck.y = love.graphics.getHeight() / 2 - deck_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR / 2
 
-    CARD_HEIGHT = back_card_texture:getHeight() * scale
+    CARD_HEIGHT = back_card_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR
 
     knock_button_x = love.graphics.getWidth() - KNOCK_BUTTON_WIDTH - 30
     knock_button_y = HAND_Y_POSITION + CARD_HEIGHT / 2 - KNOCK_BUTTON_HEIGHT / 2
@@ -141,11 +141,11 @@ function Scene.resize(w, h)
 
     update_hand_positions(h)
 
-    deck.scaleX = scale
-    deck.scaleY = scale
-    discard_pile.scaleX = scale
-    discard_pile.scaleY = scale
-    opponent_card_reference:set_scale(scale, scale)
+    deck.scaleX = scale / ASSET_RESOLUTION_FACTOR
+    deck.scaleY = scale / ASSET_RESOLUTION_FACTOR
+    discard_pile.scaleX = scale / ASSET_RESOLUTION_FACTOR
+    discard_pile.scaleY = scale / ASSET_RESOLUTION_FACTOR
+    opponent_card_reference:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
 
     player_hand.x = w / 2
     player_hand.y = HAND_Y_POSITION
@@ -154,26 +154,26 @@ function Scene.resize(w, h)
 
     discard_pile.x = w / 2 - discard_pile:get_width() / 2
     discard_pile.y = h / 2 - discard_pile:get_heigth() / 2
-    deck.y = h / 2 - deck_texture:getHeight() * scale / 2
+    deck.y = h / 2 - deck_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR / 2
 
-    CARD_HEIGHT = back_card_texture:getHeight() * scale
+    CARD_HEIGHT = back_card_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR
     knock_button_x = w - KNOCK_BUTTON_WIDTH - 30
     knock_button_y = HAND_Y_POSITION + CARD_HEIGHT / 2 - KNOCK_BUTTON_HEIGHT / 2
 
     for _, card in ipairs(player_hand.cards) do
-        card:set_scale(scale, scale)
+        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
     end
 
     for _, card in ipairs(opponent_hand.cards) do
-        card:set_scale(scale, scale)
+        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
     end
 
     if discard_pile.hightest_card ~= nil then
-        discard_pile.hightest_card:set_scale(scale, scale)
+        discard_pile.hightest_card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
     end
 
     if discard_pile.second_highest_card ~= nil then
-        discard_pile.second_highest_card:set_scale(scale, scale)
+        discard_pile.second_highest_card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
     end
 end
 
@@ -186,7 +186,7 @@ local function copy(original)
 end
 
 local function get_lamp_x()
-    local card_width = back_card_texture:getWidth() * scale
+    local card_width = back_card_texture:getWidth() * scale / ASSET_RESOLUTION_FACTOR
     local max_hand_half_width = (card_width / 1.5) * MAX_HAND_CARDS / 2 + card_width / 2
     return love.graphics.getWidth() / 2 - max_hand_half_width - LAMP_RADIUS * scale - 30 * scale
 end
@@ -232,7 +232,7 @@ local function handle_message(message)
     elseif message.type == "get_card_from_deck" then
         local card = get_card(message.card)
         card:set_position(deck:get_position())
-        card:set_scale(scale, scale)
+        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
         player_hand:add_card(card)
     elseif message.type == "new_round" then
         player_hand:reset()

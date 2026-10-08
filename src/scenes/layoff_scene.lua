@@ -31,7 +31,7 @@ local function build_meld_cards(names)
     local cards = {}
     for _, name in ipairs(names) do
         local card = get_card(name)
-        card:set_scale(scale, scale)
+        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
         table.insert(cards, card)
     end
     return cards
@@ -140,7 +140,7 @@ function Scene.load(shared_host, shared_server, combinations, my_hand_cards)
     my_cards = {}
     for _, card in ipairs(my_hand_cards) do
         local copy = get_card(card.rank .. "_" .. card.suit)
-        copy:set_scale(scale, scale)
+        copy:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
         table.insert(my_cards, copy)
     end
 
