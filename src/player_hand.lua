@@ -159,16 +159,10 @@ function PlayerHand(x, y)
                 if card ~= hovered_card and card ~= dragging_card then
                     highlight_card_shader:send("highlight_color", colors[i])
                     card:draw(true)
-                elseif card == hovered_card then
-                    love.graphics.setShader(hovered_card_shader)
-                    hovered_card_shader:send("time", love.timer.getTime())
-
-                    card:draw(true)
-
-                    love.graphics.setShader(highlight_card_shader)
-                elseif card == dragging_card then
-                    love.graphics.setShader(dragging_card_shader)
-                    dragging_card_shader:send("time", love.timer.getTime())
+                else
+                    love.graphics.setShader(highlight_hovered_card_shader)
+                    highlight_hovered_card_shader:send("time", love.timer.getTime())
+                    highlight_hovered_card_shader:send("highlight_color", colors[i])
 
                     card:draw(true)
 

@@ -99,6 +99,56 @@ vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screenPos)
 }
 ]])
 
+highlight_hovered_card_shader = love.graphics.newShader([[
+extern number time;
+extern vec3 highlight_color;
+
+vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screen_coords)
+{
+    vec4 pixel = Texel(tex, uv);
+
+    // combination outline (same as highlight_card_shader)
+    float edge = min(
+        min(uv.x, 1.0 - uv.x),
+        min(uv.y, 1.0 - uv.y)
+    );
+
+    float edgeGlow = 1.0 - smoothstep(0.0, 0.03, edge);
+    float pulse = 0.85 + 0.15 * sin(time * 3.0);
+
+    pixel.rgb = mix(
+        pixel.rgb,
+        highlight_color,
+        edgeGlow * 0.8 * pulse
+    );
+
+    // shine (same as dragging_card_shader)
+    float cycle = mod(time, 2.0);
+
+    float fadeIn  = smoothstep(0.0, 0.35, cycle);
+    float fadeOut = 1.0 - smoothstep(1.4, 1.8, cycle);
+    float shineTime = fadeIn * fadeOut;
+
+    float center = mix(-0.25, 1.25, cycle / 1.8);
+    float diagonal = uv.x + uv.y * 0.35;
+
+    float distance = abs(diagonal - center);
+    float shine = 1.0 - smoothstep(0.0, 0.16, distance);
+
+    shine *= shineTime;
+
+    pixel.rgb = mix(
+        pixel.rgb,
+        vec3(1., 1., 1.),
+        shine * 0.65
+    );
+
+    float shineEdge = smoothstep(0.0, 0.25, distance);
+    pixel.rgb -= shine * shineEdge * 0.04;
+
+    return pixel * color;
+}
+]])
 
 lamp_shader = love.graphics.newShader([[
 extern number time;
@@ -127,4 +177,4 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 ]])
 
 
-return dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader, lamp_shader
+return dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader, highlight_hovered_card_shader, lamp_shader, highlight_hovered_card_shader
