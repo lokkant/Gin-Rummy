@@ -15,6 +15,7 @@ local love = require "love"
 local network = require "network"
 local ui = require "ui"
 local layout = require "client/layout"
+local sounds = require "client/sounds"
 
 local Scene = {}
 
@@ -301,7 +302,15 @@ end
 -- Left button (defender only): FINISH, or the start of dragging a hand card (the topmost one under the
 -- cursor).
 function Scene.mousepressed(x, y, button)
-    if button ~= 1 or role ~= "defender" or is_submitted or is_left then return end
+    if button ~= 1 or is_submitted or is_left then return end
+
+    -- The knocker has nothing to move: grabbing a card is an invalid move.
+    if role ~= "defender" then
+        if get_hand_card_at(x, y, nil) ~= nil then
+            sounds.play_failure()
+        end
+        return
+    end
 
     if ui.point_in_rect(x, y, finish_button) then
         is_submitted = true
@@ -336,6 +345,9 @@ function Scene.mousereleased(x, y, button)
     if meld_index ~= nil and can_extend_meld(card, melds[meld_index].cards) then
         network.send({type = "layoff_card", card = card.rank .. "_" .. card.suit, meld_index = meld_index})
         move_card_to_meld(card, meld_index)
+    elseif meld_index ~= nil then
+        -- dropped on a meld that the card does not fit
+        sounds.play_failure()
     end
 
     dragging_card = nil

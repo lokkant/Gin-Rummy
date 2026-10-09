@@ -18,14 +18,14 @@ local love = require "love"
 
 local config = {
     -- Seconds without a game step until the eye starts to turn red.
-    idle_warning_start = 3,
+    idle_warning_start = 5,
     -- Seconds after the eye started to turn red until the iris is fiery red and the vessels are at their
     -- maximum.
-    idle_warning_full_delay = 3,
+    idle_warning_full_delay = 6,
     -- Seconds after the iris became fiery red until the glass cracks on the screen.
     idle_crack_delay = 1,
     -- Seconds after the glass cracks until the round is lost by waiting (0 = at the very moment it cracks).
-    idle_loss_delay = 0,
+    idle_loss_delay = 1,
     -- Points the opponent gets when the round is lost by waiting.
     timeout_penalty = 10,
     -- Longest wait, in seconds, for the client's "turn_started" before the clock starts anyway (so that a
@@ -41,7 +41,13 @@ local config = {
     -- Opacity of the cracks (0..1); they stay faint so that everything can still be seen.
     crack_alpha = 0.45,
     -- Volume of the sound effects (0 = silent, 1 = as recorded).
-    sound_volume = 0.8
+    sound_volume = 0.8,
+    -- Loudness of the sound of an invalid move (0 = none, 1 = as recorded), relative to sound_volume; it is
+    -- kept low so that it does not get annoying.
+    failure_volume = 0.4,
+    -- Loudness of the card sounds that belong to the opponent (their cards being dealt, drawn, discarded),
+    -- relative to our own: 0 = none, 1 = as loud as ours.
+    opponent_card_volume = 0.6
 }
 
 -- Replaces defaults with the values of the optional user file; a broken file is ignored.

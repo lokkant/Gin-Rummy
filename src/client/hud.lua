@@ -88,8 +88,12 @@ function hud.update(state, dt)
 
     -- The turn timer (a taking-too-long player gets a red eye and a cracked screen) and the eye's reaction.
     if impatience.update(state.impatience, dt, state.turn_timer, state.is_my_turn) then
+        sounds.stop_heartbeat()
         sounds.play_crack()
     end
+
+    -- The heart beats from the moment the eye starts to turn red until the glass cracks.
+    sounds.update_heartbeat(dt, state.impatience.stress, state.impatience.crack == nil)
     sounds.update(dt)
     state.eye.stress = state.impatience.stress
 

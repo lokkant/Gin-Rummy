@@ -9,7 +9,9 @@ require 'cards_database'
 
 local love = require "love"
 local network = require "network"
+local config = require "config"
 local layout = require "client/layout"
+local sounds = require "client/sounds"
 
 local messages = {}
 
@@ -44,6 +46,7 @@ local function add_opponent_card(state, x, y)
     card.rank, card.suit = string.match(card_names[love.math.random(#card_names)], "([%w]+)_([%a]+)")
     card:set_position(x, y)
     state.opponent_hand:add_card(card)
+    sounds.play_card(config.opponent_card_volume)
 end
 
 -- Flies a face-down card to the discard pile; options (tag, blocking, on_finish) go to Animations:move_card
@@ -103,6 +106,7 @@ local function handle_knock_discard(state, message)
         -- The pause starts only when the card has landed.
         on_finish = function()
             state.discard_pile:add_card(flying_card)
+            sounds.play_card(message.mine and 1 or config.opponent_card_volume)
             state.animations:delay(KNOCK_PAUSE_DURATION, {blocking = true})
         end
     })
@@ -146,6 +150,7 @@ function handlers.opponent_place_card_to_discard_pile(state, message)
         tag = "discard_pile",
         on_finish = function()
             state.discard_pile:add_card(placed_card)
+            sounds.play_card(config.opponent_card_volume)
         end
     })
 end
@@ -164,6 +169,7 @@ function handlers.get_card_from_deck(state, message)
     card:set_scale(layout.card_scale(), layout.card_scale())
     state.draw_requested = false
     state.player_hand:add_card(card)
+    sounds.play_card(1)
 
     -- a game step: the turn timer starts again
     if state.turn_timer then state.turn_timer.elapsed = 0 end

@@ -7,6 +7,7 @@
 local network = require "network"
 local ui = require "ui"
 local knock = require "client/knock"
+local sounds = require "client/sounds"
 
 local input = {}
 
@@ -18,24 +19,38 @@ function input.mousepressed(state, x, y, button)
     if button == 2 then hand:increase_index_of_combination() end
     if button ~= 1 then return end
 
+    -- A KNOCK that is not allowed (not our turn, nothing to throw away, too much deadwood) gets the soft
+    -- "no" sound.
     if ui.point_in_rect(x, y, state.layout.knock_button) then
-        knock.try_send(state)
+        if not knock.try_send(state) then
+            sounds.play_failure()
+        end
         return
     end
 
     -- take card from deck (one request at a time: the card is only added when the server answers)
-    if state.deck:mousepressed(x, y) and state.is_my_turn and #hand.cards == 10 and not state.draw_requested then
-        state.draw_requested = true
-        network.send({type = "get_card_from_deck"})
+    if state.deck:mousepressed(x, y) then
+        if state.is_my_turn and #hand.cards == 10 then
+            if not state.draw_requested then
+                state.draw_requested = true
+                network.send({type = "get_card_from_deck"})
+            end
+        else
+            -- not our turn, or the card for this turn is already drawn
+            sounds.play_failure()
+        end
     -- take card from discard pile (not while the opponent's card is still flying onto it)
     elseif state.discard_pile:mousepressed(x, y) then
-        if state.is_my_turn and #hand.cards == 10 and not state.animations:is_active("discard_pile") then
+        if not (state.is_my_turn and #hand.cards == 10) or state.animations:is_active("discard_pile") then
+            sounds.play_failure()
+        else
             -- Taken locally at once; taken_from_discard remembers it, because it may not be thrown back
             -- this turn.
             local card = state.discard_pile:remove_top_card()
             if card ~= nil then
                 state.taken_from_discard = card
                 hand:add_card(card)
+                sounds.play_card(1)
 
                 -- a game step: the turn timer starts again
                 if state.turn_timer then state.turn_timer.elapsed = 0 end
@@ -63,15 +78,20 @@ end
 function input.mousereleased(state, x, y, button)
     local card = state.dragging_card
 
-    -- move card to discard pile (the card just taken from it can't go straight back)
-    if card ~= nil and card ~= state.taken_from_discard and
-       state.discard_pile:mousepressed(x, y) and state.is_my_turn and #state.player_hand.cards == 11 then
-        network.send({type = "put_card_to_discard_pile", card = card.rank .. "_" .. card.suit})
+    -- A card dropped on the discard pile is discarded (the card just taken from the pile can't go straight
+    -- back); any other drop there is an invalid move (not our turn, nothing drawn yet, the taken card).
+    if card ~= nil and state.discard_pile:mousepressed(x, y) then
+        if card ~= state.taken_from_discard and state.is_my_turn and #state.player_hand.cards == 11 then
+            network.send({type = "put_card_to_discard_pile", card = card.rank .. "_" .. card.suit})
 
-        state.discard_pile:add_card(card)
-        state.player_hand:remove_card(card.rank, card.suit)
+            state.discard_pile:add_card(card)
+            state.player_hand:remove_card(card.rank, card.suit)
+            sounds.play_card(1)
 
-        state.is_my_turn = false
+            state.is_my_turn = false
+        else
+            sounds.play_failure()
+        end
     end
 
     if button == 1 then state.dragging_card = nil end
