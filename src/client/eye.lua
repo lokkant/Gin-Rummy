@@ -187,9 +187,11 @@ end
 
 -- Per frame: opens or closes the lids (is_awake), blinks from time to time while open and turns the iris
 -- towards the cursor (mouse_x, mouse_y), given the eye's centre on the screen and the size of one eye pixel
--- on the screen. dt is in seconds.
-function eye.update(self, dt, is_awake, mouse_x, mouse_y, screen_x, screen_y, pixel_size)
-    self.openness = self.openness + ((is_awake and 1 or 0) - self.openness) * math.min(1, dt * OPEN_SPEED)
+-- on the screen. dt is in seconds. peek_openness (optional, 0..1): while not awake the lids stay open this
+-- far and the eye looks up, as if watching the opponent's cards through a slit.
+function eye.update(self, dt, is_awake, mouse_x, mouse_y, screen_x, screen_y, pixel_size, peek_openness)
+    local target_openness = is_awake and 1 or (peek_openness or 0)
+    self.openness = self.openness + (target_openness - self.openness) * math.min(1, dt * OPEN_SPEED)
 
     if is_awake and self.openness > 0.95 then
         self.blink_timer = self.blink_timer - dt
@@ -204,6 +206,9 @@ function eye.update(self, dt, is_awake, mouse_x, mouse_y, screen_x, screen_y, pi
     if is_awake then
         target_x = clamp((mouse_x - screen_x) / pixel_size * LOOK_SENSITIVITY, MAX_LOOK_X)
         target_y = clamp((mouse_y - screen_y) / pixel_size * LOOK_SENSITIVITY, MAX_LOOK_Y)
+    elseif peek_openness then
+        -- half open and looking up: towards the opponent's cards at the top of the table
+        target_y = -MAX_LOOK_Y
     end
 
     local follow = math.min(1, dt * LOOK_SPEED)

@@ -1,8 +1,10 @@
 -- Entry point of the LOVE game: global UI scale, the SceneManager (scene registry + screen wipe) and the
 -- love.* callbacks that forward everything to the current scene. Runs for both the client and the server:
--- `love . --server [--port N]` only starts the game server (server.lua) without any scene; otherwise the
--- client scenes are registered (scenes/*.lua) and the start menu opens. `love . --connect host:port` skips
--- the menus and joins that server at once (a shortcut for development). A scene is a table with
+-- `love . --server [--port N] [--config NAME]` only starts the game server (server.lua) without any scene,
+-- with the settings of the file NAME (a file of the "server_configs" folder in the save directory, or a path;
+-- see server_config.lua); otherwise the client scenes are registered (scenes/*.lua) and the start menu
+-- opens. `love . --connect host:port` skips the menus and joins that server at once (a shortcut for
+-- development). A scene is a table with
 -- load/update/draw and optional input callbacks. A server started by the "Host a game" button runs inside
 -- the client and is updated here every frame, whatever scene is active. Returns SceneManager (also a
 -- global) so scenes can `require "main"` it.
@@ -183,25 +185,47 @@ local function has_flag(arg, name)
     return false
 end
 
--- Startup: `--server` starts the headless game server and exits with code 1 if the port is taken. Otherwise
--- the client scenes are registered and the start menu (or, with --connect, the game) opens.
+-- Startup: `--server` starts the headless game server and exits with code 1 if the port is taken or the
+-- settings file given with --config can't be used. Otherwise the client scenes are registered and the start
+-- menu (or, with --connect, the game) opens.
 function love.load(arg)
     if has_flag(arg, "--server") then
+        local config_argument = get_option(arg, "--config")
+
+        if config_argument then
+            local server_config = require "server_config"
+            local values, problem = server_config.read_argument(config_argument)
+
+            if values == nil then
+                print("ERROR: " .. problem)
+                love.event.quit(1)
+                return
+            end
+
+            server_config.apply(values)
+        end
+
         if not server.start(tonumber(get_option(arg, "--port"))) then
             love.event.quit(1)
         end
         return
     end
 
+    require("ui").install_text_snapping()
+
     local game_client = require "scenes/game_client"
     local connect_menu = require "scenes/connect_menu"
     local layoff_scene = require "scenes/layoff_scene"
     local start_menu = require "scenes/start_menu"
+    local host_setup = require "scenes/host_setup"
+    local config_editor = require "scenes/config_editor"
 
     SceneManager.add("game", game_client)
     SceneManager.add("menu", connect_menu)
     SceneManager.add("layoff", layoff_scene)
     SceneManager.add("start", start_menu)
+    SceneManager.add("host", host_setup)
+    SceneManager.add("config", config_editor)
 
     local address = get_option(arg, "--connect")
     if address then
@@ -279,6 +303,28 @@ function love.textinput(t)
 
     if scene and scene.textinput then
         scene.textinput(t)
+    end
+end
+
+-- Mouse wheel (the settings forms scroll with it); ignored during a wipe.
+function love.wheelmoved(dx, dy)
+    if transition.active then return end
+
+    local scene = SceneManager.scenes[SceneManager.current_scene]
+
+    if scene and scene.wheelmoved then
+        scene.wheelmoved(dx, dy)
+    end
+end
+
+-- A file dropped onto the window (the host screen takes settings files this way); ignored during a wipe.
+function love.filedropped(file)
+    if transition.active then return end
+
+    local scene = SceneManager.scenes[SceneManager.current_scene]
+
+    if scene and scene.filedropped then
+        scene.filedropped(file)
     end
 end
 

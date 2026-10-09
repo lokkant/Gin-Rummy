@@ -16,8 +16,21 @@ function OpponentHand(x, y)
     self.x = x
     self.y = y
     self.cards = {}
+    -- nervousness multiplies the sway of the cards; restlessness (0..1) spreads the fan and is raised while
+    -- the opponent hesitates (see spread_offset). Both are set from outside.
+    self.nervousness = 1
+    self.restlessness = 0
     -- meld_of[card] = 1-based number of the meld a revealed card belongs to (empty while face down).
     self.meld_of = {}
+
+
+    -- How far the card is shifted outwards from the middle of the fan by the restlessness. It is only a
+    -- drawing offset: the cards keep their slots, so they stay at rest and keep swaying while the fan
+    -- spreads.
+    function self:spread_offset(card)
+        local middle = card.x + card:get_width() / 2
+        return (middle - self.x) * 0.18 * self.restlessness
+    end
 
 
     -- Moves every card towards its slot in the fan at `speed` pixels per second. dragging_card /
@@ -59,7 +72,11 @@ function OpponentHand(x, y)
     function self:remove_random_card()
         if #self.cards == 0 then return nil end
         local index = love.math.random(#self.cards)
-        return table.remove(self.cards, index)
+        local card = table.remove(self.cards, index)
+
+        -- Leaves from where the card is seen, not from its slot.
+        card.x = card.x + self:spread_offset(card)
+        return card
     end
 
 
@@ -110,7 +127,10 @@ function OpponentHand(x, y)
                 card_shader:send("time", time)
             end
 
-            card:draw(true)
+            local offset = self:spread_offset(card)
+            card.x = card.x + offset
+            card:draw(true, self.nervousness)
+            card.x = card.x - offset
         end
 
         love.graphics.setShader(currentShader)

@@ -189,41 +189,43 @@ vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screen_coords)
 }
 ]])
 
--- The table felt with a light over the half of the active player. It is drawn onto a stretched 1x1 white
--- image that covers the window (see client/hud.lua), so the picture carries no information and everything
--- comes from the texture coordinates. The lit half is bright and warm, the other half is darker and covered
--- with a fine checker pattern, so the difference does not rely on colour alone.
+-- The table felt with its vignette (see client/felt.lua). It is drawn onto a stretched 1x1 white image that
+-- covers the window, so the picture carries no information and everything comes from the texture
+-- coordinates. The lit parts are bright and warm, the rest is darker and covered with a fine checker
+-- pattern, so the difference does not rely on colour alone.
 spotlight_shader = love.graphics.newShader([[
 // time: seconds, set from Lua every frame (the light breathes a little).
 extern number time;
 // felt_color: the plain table colour, RGB 0..1.
 extern vec3 felt_color;
-// light_y: vertical position of the light centre, 0 = top edge, 1 = bottom edge; Lua moves it smoothly
-// between the opponent's and the player's side.
-extern number light_y;
-// strength: 0 = flat felt (nobody's turn), 1 = the full effect; also changed smoothly from Lua.
-extern number strength;
+// unlit_brightness: brightness of the part without light (1 = same as the lit part, 0 = black).
+extern number unlit_brightness;
+// lights: up to four elliptical lights {centre x, centre y, level}; x and y are in texture coordinates
+// (0 = left / top edge, 1 = right / bottom edge) and level is 0 (off) to 1 (full). Lua moves and fades them.
+extern vec3 lights[4];
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 {
-    // Elliptical light: wide horizontally and tall enough to reach past the middle of the table, so the
-    // stock and the discard pile stay readable for both players. d is 1 at the edge of the ellipse.
-    vec2 p = (texture_coords - vec2(0.5, light_y)) / vec2(0.85, 0.62);
-    float d = length(p);
+    // Each light is an ellipse, wide horizontally and tall enough to reach past the middle of the table,
+    // so the stock and the discard pile stay readable for both players. d is 1 at the edge of the ellipse.
+    float lit = 0.0;
+    for (int i = 0; i < 4; i++)
+    {
+        vec2 p = (texture_coords - lights[i].xy) / vec2(0.85, 0.62);
+        float d = length(p);
+        lit = max(lit, (1.0 - smoothstep(0.15, 1.0, d)) * lights[i].z);
+    }
 
-    // lit: 1 in the centre of the light, 0 outside the ellipse; a slow +-4 % breathing.
-    float lit = (1.0 - smoothstep(0.15, 1.0, d)) * (0.96 + 0.04 * sin(time * 1.5));
+    // A slow +-4 % breathing of the light.
+    lit *= 0.96 + 0.04 * sin(time * 1.5);
 
-    // Brightness from 0.6 (unlit) to 1.1 (lit) and a little warm yellow in the lit area.
-    float brightness = mix(0.6, 1.1, lit);
+    // Brightness from unlit_brightness to 1.1 (lit) and a little warm yellow in the lit area.
+    float brightness = mix(unlit_brightness, 1.1, lit);
     vec3 col = felt_color * brightness + vec3(0.07, 0.05, 0.0) * lit;
 
     // Checker of 3x3 pixels that darkens the unlit area a bit more (dither).
     float checker = mod(floor(screen_coords.x / 3.0) + floor(screen_coords.y / 3.0), 2.0);
     col *= 1.0 - 0.07 * (1.0 - lit) * checker;
-
-    // strength fades the whole effect in and out.
-    col = mix(felt_color, col, strength);
 
     return vec4(col, 1.0) * color;
 }

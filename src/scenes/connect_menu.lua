@@ -1,11 +1,14 @@
 -- Connect menu scene (client): a text field for "host:port" with validation, ENTER starts the game scene
--- (SceneManager.switch("game", address)), a BACK button to the start menu and a QUIT button. It is reached
+-- (SceneManager.switch("game", address)), a BACK button to the start menu and an ENTER button that does the
+-- same as the ENTER key. It is reached
 -- from the start menu ("Join a game") and when a joined game is left. `require "main"` returns the
 -- SceneManager.
 
 local love = require "love"
 local SceneManager = require "main"
 local ui = require "ui"
+local felt = require "client/felt"
+local server_config = require "server_config"
 
 local Scene = {}
 
@@ -24,10 +27,10 @@ local BUTTON_WIDTH = 200
 local BUTTON_HEIGHT = 50
 local BUTTON_GAP = 20
 
-local DARK_RED = {0.6, 0.2, 0.2, 1}
+local GREEN = {0.3, 0.6, 0.3, 1}
 local GRAY = {0.3, 0.3, 0.3, 1}
 
--- Returns the rects of the BACK and QUIT buttons: side by side below the text field.
+-- Returns the rects of the BACK and ENTER buttons: side by side below the text field.
 local function get_buttons()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     local field_y = h / 2 - form.height / 2
@@ -36,7 +39,7 @@ local function get_buttons()
 
     return {
         back = {x = x, y = y, w = BUTTON_WIDTH, h = BUTTON_HEIGHT},
-        quit = {x = x + BUTTON_WIDTH + BUTTON_GAP, y = y, w = BUTTON_WIDTH, h = BUTTON_HEIGHT}
+        enter = {x = x + BUTTON_WIDTH + BUTTON_GAP, y = y, w = BUTTON_WIDTH, h = BUTTON_HEIGHT}
     }
 end
 
@@ -82,6 +85,7 @@ end
 -- Scene entry: enables text input events, loads the fonts and clears the field.
 function Scene.load()
     love.keyboard.setTextInput(true)
+    server_config.reset()
 
     if font == nil then
         font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 28)
@@ -99,6 +103,18 @@ function Scene.textinput(t)
 
     form.text = form.text .. t
     form.error = nil
+end
+
+-- Validates the typed address: starts the game scene when it is fine, otherwise shows the error under the
+-- field.
+local function connect()
+    local ok, error_message = validate_address(form.text)
+
+    if ok then
+        SceneManager.switch("game", form.text)
+    else
+        form.error = error_message
+    end
 end
 
 -- Backspace (with Ctrl: a whole word), Ctrl+V paste, ENTER validates the address and starts the game
@@ -121,17 +137,11 @@ function Scene.keypressed(key)
             form.error = nil
         end
     elseif key == "return" or key == "kpenter" then
-        local ok, error_message = validate_address(form.text)
-
-        if ok then
-            SceneManager.switch("game", form.text)
-        else
-            form.error = error_message
-        end
+        connect()
     end
 end
 
--- A left click on QUIT exits the game.
+-- A left click on BACK returns to the start menu, a click on ENTER connects like the ENTER key.
 function Scene.mousepressed(x, y, button)
     if button ~= 1 then return end
 
@@ -139,24 +149,16 @@ function Scene.mousepressed(x, y, button)
 
     if ui.point_in_rect(x, y, buttons.back) then
         SceneManager.switch("start")
-    elseif ui.point_in_rect(x, y, buttons.quit) then
-        love.event.quit()
+    elseif ui.point_in_rect(x, y, buttons.enter) then
+        connect()
     end
 end
 
--- Draws the form: table-coloured background, label, text field, error message and the QUIT button.
+-- Draws the form: the plain table, label, text field, error message and the BACK and ENTER buttons.
 function Scene.draw()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
 
-    love.graphics.setColor(love.math.colorFromBytes(53, 101, 77, 255))
-
-    love.graphics.rectangle(
-        "fill",
-        0,
-        0,
-        w,
-        h
-    )
+    felt.draw_plain()
 
     local field_x = w / 2 - form.width / 2
     local field_y = h / 2 - form.height / 2
@@ -185,7 +187,7 @@ function Scene.draw()
 
     love.graphics.setFont(label_font)
     ui.draw_button(buttons.back, "BACK", GRAY)
-    ui.draw_button(buttons.quit, "QUIT", DARK_RED)
+    ui.draw_button(buttons.enter, "ENTER", GREEN)
 
     love.graphics.setColor(1, 1, 1)
 end

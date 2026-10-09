@@ -4,6 +4,7 @@
 
 local love = require "love"
 local ui = require "ui"
+local horror = require "client/horror"
 
 -- Creates the pile at (x, y); hover_scale starts at 1 (no enlargement).
 function Deck(x, y, texture, scaleX, scaleY)
@@ -29,17 +30,19 @@ function Deck(x, y, texture, scaleX, scaleY)
     -- Draws the pile enlarged by hover_scale around its centre: the top-left corner moves back by half of
     -- the extra width and half of the extra height.
     function self:draw()
+        -- The pile slowly "breathes": its size changes by config.deck_breathing (a few percent at most).
+        local scale_now = self.hover_scale * (1 + horror.amount("deck_breathing") * math.sin(love.timer.getTime() * 1.1))
         local width = self.texture:getWidth() * self.scaleX
         local height = self.texture:getHeight() * self.scaleY
-        local offset_x = (self.hover_scale - 1.0) * width / 2
-        local offset_y = (self.hover_scale - 1.0) * height / 2
+        local offset_x = (scale_now - 1.0) * width / 2
+        local offset_y = (scale_now - 1.0) * height / 2
 
         love.graphics.draw(self.texture,
             self.x - offset_x,
             self.y - offset_y,
             0,
-            self.scaleX * self.hover_scale,
-            self.scaleY * self.hover_scale)
+            self.scaleX * scale_now,
+            self.scaleY * scale_now)
     end
 
     -- True if the click (x, y) hits the pile; callers check the mouse button themselves.

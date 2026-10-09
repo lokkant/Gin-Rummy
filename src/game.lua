@@ -47,6 +47,18 @@ local function card_value_from_name(name)
     return get_card_value({rank = rank})
 end
 
+-- The factor all turn timer limits are multiplied by in round number `round_number` (1 = the first of a
+-- match): 1 at first, then config.timer_shrink_factor once more after every config.timer_shrink_every
+-- rounds, but not below config.timer_shrink_min_factor. Both players get the same limits.
+local function get_time_factor(round_number)
+    if not (config.horror_enabled and config.timer_shrink_enabled) or config.timer_shrink_every <= 0 then
+        return 1
+    end
+
+    local steps = math.floor((round_number - 1) / config.timer_shrink_every)
+    return math.max(config.timer_shrink_min_factor, config.timer_shrink_factor ^ steps)
+end
+
 -- Creates the match state for two peers. `deck` is a ServerDeck for the first round (later rounds replace
 -- it). Returns the game object; call start_game() to deal the first round.
 function Game(player1, player2, deck)
@@ -61,6 +73,9 @@ function Game(player1, player2, deck)
     --                       laid_off_cards (names, in order), laid_off_value (points)}
     --   taken_from_discard  the card picked up from the discard pile this turn; it can't be discarded again
     --                       (otherwise taking it would be a free pass)
+    --   round_number        1 for the first round of the match, then counts up
+    --   time_factor         the turn timer limits of this round are multiplied by it (see get_time_factor);
+    --                       the clients get it with new_game / new_round
     --   idle_time           seconds the player to move has gone without a game step (see update)
     --   turn_acknowledged   the client confirmed it showed this turn (turn_started); idle_time only counts
     --                       from then, or after config.turn_ack_wait seconds without an answer
@@ -79,6 +94,8 @@ function Game(player1, player2, deck)
     self.is_new_round = true
     self.pending_knock = nil
     self.taken_from_discard = nil
+    self.round_number = 1
+    self.time_factor = get_time_factor(1)
     self.idle_time = 0
     self.turn_acknowledged = false
     self.ack_wait = 0
@@ -140,11 +157,14 @@ function Game(player1, player2, deck)
         local fade_full = config.idle_warning_start + config.idle_warning_full_delay
         local crack = fade_full + config.idle_crack_delay
 
+        -- Later rounds shorten every limit by the same factor.
+        local factor = self.time_factor
+
         return {
-            fade_start = config.idle_warning_start,
-            fade_full = fade_full,
-            crack = crack,
-            timeout = crack + config.idle_loss_delay
+            fade_start = config.idle_warning_start * factor,
+            fade_full = fade_full * factor,
+            crack = crack * factor,
+            timeout = (crack + config.idle_loss_delay) * factor
         }
     end
 
@@ -356,8 +376,10 @@ function Game(player1, player2, deck)
         self.taken_from_discard = nil
         self.phase = "draw"
         self.turn = (self.turn == player1) and player2 or player1
+        self.round_number = self.round_number + 1
+        self.time_factor = get_time_factor(self.round_number)
 
-        local message = json.encode({type = "new_round"})
+        local message = json.encode({type = "new_round", time_factor = self.time_factor, horror = config.horror_enabled})
         print("Send:", message)
         player1:send(message)
         player2:send(message)

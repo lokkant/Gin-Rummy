@@ -14,6 +14,7 @@ local hud = require "client/hud"
 local overlays = require "client/overlays"
 local input = require "client/input"
 local messages = require "client/messages"
+local sounds = require "client/sounds"
 
 local Scene = {}
 
@@ -24,6 +25,7 @@ local state
 -- a joining player returns to the address menu.
 local function leave_to_menu()
     network.close()
+    sounds.stop_ambient()
 
     if state ~= nil and state.hosting then
         server.stop()
@@ -116,8 +118,8 @@ local overlay_actions = {
     toggle_fullscreen = function()
         love.window.setFullscreen(not love.window.getFullscreen())
     end,
-    toggle_wobble = function()
-        WOBBLE_ENABLED = not WOBBLE_ENABLED
+    cycle_sound = function()
+        sounds.cycle_mode()
     end,
     quit = function()
         love.event.quit()
@@ -188,10 +190,11 @@ function Scene.update(dt)
     messages.receive(state)
 end
 
--- Draw order, back to front: table (with the spotlight), stock, discard pile, eye, our hand, flying cards,
--- opponent's hand, KNOCK button, scores, cracked glass, overlays.
+-- Draw order, back to front: table (with the spotlight), the watchers, stock, discard pile, eye, our hand,
+-- flying cards, opponent's hand, KNOCK button, scores, cracked glass, overlays.
 function Scene.draw()
     hud.draw_background(state)
+    hud.draw_watchers(state)
 
     state.deck:draw()
     state.discard_pile:draw()

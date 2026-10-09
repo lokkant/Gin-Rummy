@@ -18,6 +18,8 @@ function PlayerHand(x, y)
     self.x = x
     self.y = y
     self.cards = {}
+    -- Multiplier of the sway of the cards, set from outside (1 = calm).
+    self.nervousness = 1
     self.best_combinations = {{}}
     self.index_of_combination = 1
     self.score = 0
@@ -234,13 +236,13 @@ function PlayerHand(x, y)
             for _, card in ipairs(combination) do
                 if card ~= hovered_card and card ~= dragging_card then
                     highlight_card_shader:send("highlight_color", colors[i])
-                    card:draw(true)
+                    card:draw(true, self.nervousness)
                 else
                     love.graphics.setShader(highlight_hovered_card_shader)
                     highlight_hovered_card_shader:send("time", love.timer.getTime())
                     highlight_hovered_card_shader:send("highlight_color", colors[i])
 
-                    card:draw(true)
+                    card:draw(true, self.nervousness)
 
                     love.graphics.setShader(highlight_card_shader)
                 end
@@ -254,19 +256,19 @@ function PlayerHand(x, y)
         for ind = count, #self.cards do
             local card = self.cards[ind]
             if card ~= hovered_card and card ~= dragging_card then
-                card:draw(true)
+                card:draw(true, self.nervousness)
             elseif card == hovered_card then
                 love.graphics.setShader(hovered_card_shader)
                 hovered_card_shader:send("time", love.timer.getTime())
 
-                card:draw(true)
+                card:draw(true, self.nervousness)
 
                 love.graphics.setShader(card_shader)
             elseif card == dragging_card then
                 love.graphics.setShader(dragging_card_shader)
                 dragging_card_shader:send("time", love.timer.getTime())
 
-                card:draw(true)
+                card:draw(true, self.nervousness)
 
                 love.graphics.setShader(card_shader)
             end

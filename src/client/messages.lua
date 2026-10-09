@@ -12,6 +12,7 @@ local network = require "network"
 local config = require "config"
 local layout = require "client/layout"
 local sounds = require "client/sounds"
+local horror = require "client/horror"
 
 local messages = {}
 
@@ -46,7 +47,8 @@ local function add_opponent_card(state, x, y)
     card.rank, card.suit = string.match(card_names[love.math.random(#card_names)], "([%w]+)_([%a]+)")
     card:set_position(x, y)
     state.opponent_hand:add_card(card)
-    sounds.play_card(config.opponent_card_volume)
+    sounds.play_card(config.opponent_card_volume, true)
+    state.opponent_idle = 0
 end
 
 -- Flies a face-down card to the discard pile; options (tag, blocking, on_finish) go to Animations:move_card
@@ -59,7 +61,12 @@ local function fly_to_discard_pile(state, flying_card, options)
 end
 
 -- Cleans the table for the next round (or game): hands, pile and flags, and a pending result banner.
-local function reset_table(state)
+-- `message` is the new_round / new_game message; its `time_factor` says how much shorter the turn timer
+-- limits are in this round, and the limits of the last round no longer apply.
+local function reset_table(state, message)
+    state.time_factor = message.time_factor or 1
+    horror.set_match_enabled(message.horror)
+    state.turn_limits = nil
     state.dragging_card = nil
     state.taken_from_discard = nil
     state.draw_requested = false
@@ -106,7 +113,7 @@ local function handle_knock_discard(state, message)
         -- The pause starts only when the card has landed.
         on_finish = function()
             state.discard_pile:add_card(flying_card)
-            sounds.play_card(message.mine and 1 or config.opponent_card_volume)
+            sounds.play_card(message.mine and 1 or config.opponent_card_volume, not message.mine)
             state.animations:delay(KNOCK_PAUSE_DURATION, {blocking = true})
         end
     })
@@ -118,6 +125,7 @@ local handlers = {}
 -- Our turn begins: forget the card taken from the discard pile last turn and allow a new draw request.
 function handlers.is_my_turn(state, message)
     state.turn_timer = message.limits and {elapsed = 0, limits = message.limits} or nil
+    state.turn_limits = message.limits
     state.taken_from_discard = nil
     state.draw_requested = false
     state.is_my_turn = message.answer
@@ -150,7 +158,8 @@ function handlers.opponent_place_card_to_discard_pile(state, message)
         tag = "discard_pile",
         on_finish = function()
             state.discard_pile:add_card(placed_card)
-            sounds.play_card(config.opponent_card_volume)
+            sounds.play_card(config.opponent_card_volume, true)
+            state.opponent_idle = 0
         end
     })
 end
@@ -179,8 +188,8 @@ end
 handlers.knock_discard = handle_knock_discard
 
 -- A new round starts: clear the table; the cards of the deal follow as separate messages.
-function handlers.new_round(state)
-    reset_table(state)
+function handlers.new_round(state, message)
+    reset_table(state, message)
 end
 
 -- Someone knocked without gin: both players switch to the layoff scene (the message says which role we
@@ -266,8 +275,8 @@ end
 
 -- A new match starts (first game or accepted rematch): reset the table, scores and end screen. A pending
 -- "leave" is cancelled.
-function handlers.new_game(state)
-    reset_table(state)
+function handlers.new_game(state, message)
+    reset_table(state, message)
     state.is_paused = false
     state.is_game_over = false
     state.game_over_info = nil

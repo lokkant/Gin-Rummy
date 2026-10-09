@@ -82,7 +82,7 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
         card_shader:send("time", love.timer.getTime())
 
         if self.highest_card ~= nil then
-            love.graphics.draw(self.highest_card.texture,
+            love.graphics.draw(self.highest_card:get_texture(),
                 self.x - offset_x,
                 self.y - offset_y,
                 0,

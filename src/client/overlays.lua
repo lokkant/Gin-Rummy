@@ -6,16 +6,20 @@
 local love = require "love"
 local network = require "network"
 local ui = require "ui"
+local sounds = require "client/sounds"
 
 local overlays = {}
 
 -- Button sizes in pixels.
 local REMATCH_BUTTON_WIDTH = 140
 local REMATCH_BUTTON_HEIGHT = 50
-local PAUSE_BUTTON_WIDTH = 260
+local PAUSE_BUTTON_WIDTH = 340
 local PAUSE_BUTTON_HEIGHT = 50
 local BACK_BUTTON_WIDTH = 260
 local BACK_BUTTON_HEIGHT = 50
+
+-- The label of the sound button for each sound mode (client/sounds.lua).
+local SOUND_MODE_LABELS = {all = "Sound: ALL", essential = "Sound: ESSENTIAL ONLY", off = "Sound: OFF"}
 
 -- Button colours, RGBA.
 local GREEN = {0.3, 0.6, 0.3, 1}
@@ -37,7 +41,7 @@ local function get_rematch_buttons()
     }
 end
 
--- Returns {fullscreen, wobble, quit} rects: three buttons stacked around the middle of the screen.
+-- Returns {fullscreen, sound, quit} rects: three buttons stacked around the middle of the screen.
 local function get_pause_buttons()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     local spacing = 20
@@ -47,7 +51,7 @@ local function get_pause_buttons()
 
     return {
         fullscreen = {x = x, y = start_y, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT},
-        wobble = {x = x, y = start_y + row, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT},
+        sound = {x = x, y = start_y + row, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT},
         quit = {x = x, y = start_y + row * 2, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT}
     }
 end
@@ -96,7 +100,7 @@ function overlays.covers_table(state)
 end
 
 -- Returns (consumed, action): whether an overlay took the click and which action it asks for:
--- "leave", "rematch_yes", "rematch_no", "toggle_fullscreen", "toggle_wobble", "quit" or nil.
+-- "leave", "rematch_yes", "rematch_no", "toggle_fullscreen", "cycle_sound", "quit" or nil.
 -- Priority: no game / lost connection (back button), then the pause menu, then the game over screen.
 function overlays.handle_click(state, x, y, button)
     -- The pause menu has its own buttons, so the back button is only offered outside of it.
@@ -115,8 +119,8 @@ function overlays.handle_click(state, x, y, button)
 
         if ui.point_in_rect(x, y, buttons.fullscreen) then
             return true, "toggle_fullscreen"
-        elseif ui.point_in_rect(x, y, buttons.wobble) then
-            return true, "toggle_wobble"
+        elseif ui.point_in_rect(x, y, buttons.sound) then
+            return true, "cycle_sound"
         elseif ui.point_in_rect(x, y, buttons.quit) then
             return true, "quit"
         end
@@ -270,8 +274,8 @@ local function draw_connection(state, message)
                          w * 0.2, h / 2 + 15, w * 0.6, "center")
 end
 
--- Draws the pause menu: dark veil, title and the three buttons (the wobble and fullscreen labels show
--- their current state).
+-- Draws the pause menu: dark veil, title and the three buttons (the fullscreen and sound labels show their
+-- current state).
 local function draw_pause(state)
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
 
@@ -285,10 +289,12 @@ local function draw_pause(state)
     local buttons = get_pause_buttons()
 
     ui.draw_button(buttons.fullscreen, "Fullscreen: " .. (love.window.getFullscreen() and "ON" or "OFF"), GRAY)
-    ui.draw_button(buttons.wobble, "Card wobble: " .. (WOBBLE_ENABLED and "ON" or "OFF"), GRAY)
+    ui.draw_button(buttons.sound, SOUND_MODE_LABELS[sounds.get_mode()], GRAY)
     ui.draw_button(buttons.quit, "QUIT GAME", DARK_RED)
 
-    love.graphics.printf("Press ESC to resume", 0, buttons.quit.y + buttons.quit.h + 25, w, "center")
+    love.graphics.printf("Essential sounds: cards, heartbeat, glass and invalid moves", 0,
+                         buttons.quit.y + buttons.quit.h + 25, w, "center")
+    love.graphics.printf("Press ESC to resume", 0, buttons.quit.y + buttons.quit.h + 55, w, "center")
 end
 
 -- Draws all overlays, later ones on top: round result, waiting banner, end screen, connection message,

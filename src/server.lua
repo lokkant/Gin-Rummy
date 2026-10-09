@@ -27,8 +27,13 @@
 --
 -- Server -> client (to one player unless noted)
 --   type                                  fields           meaning
---   new_game                              -                both: a new match starts, scores are 0
---   new_round                             -                both: next round, clear the table; a deal follows
+--   new_game                              time_factor,     both: a new match starts, scores are 0
+--                                         horror
+--   new_round                             time_factor,     both: next round, clear the table; a deal follows.
+--                                         horror           time_factor: the turn timer limits of the round
+--                                                          are this share (0..1) of the ones in config.lua;
+--                                                          horror: false = the host switched the unsettling
+--                                                          effects off for this match
 --   get_card_from_deck                    card             you received this card (deal or draw)
 --   opponent_get_card_from_deck           -                the opponent received a hidden card
 --   update_discard_pile                   card             both: the face-up card that starts the round
@@ -74,6 +79,7 @@ require 'game'
 
 local enet = require "enet"
 local json = require "dkjson"
+local config = require "config"
 
 -- If console output shows up late when stdout is redirected, call io.stdout:setvbuf("line") here.
 
@@ -94,7 +100,7 @@ local function start_new_match()
     game = Game(player1, player2, ServerDeck())
     rematch_state = nil
 
-    local message = json.encode({type = "new_game"})
+    local message = json.encode({type = "new_game", time_factor = game.time_factor, horror = config.horror_enabled})
     print("Send:", message)
     player1:send(message)
     player2:send(message)

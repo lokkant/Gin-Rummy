@@ -5,14 +5,14 @@
 -- Methods take `self` explicitly, so a shallow table copy of a card is an independent card (messages.lua).
 
 local love = require "love"
+local config = require "config"
+local horror = require "client/horror"
 
 -- Idle wobble of cards: maximum sway angle (radians), speed factor of the sway and bob height in pixels.
 local WOBBLE_ANGLE = math.rad(2)
 local WOBBLE_SPEED = 0.5
 local WOBBLE_BOB = 2
 
--- Global switch for the wobble; toggled from the pause menu.
-WOBBLE_ENABLED = true
 
 -- Creates a card. x, y is its top-left corner on screen; texture is nil for data-only cards.
 -- is_active: false while the card is flying (see move_to), true once it rests and may be clicked.
@@ -28,23 +28,58 @@ function Card(rank, suit, x, y, texture, scaleX, scaleY)
     self.scaleY = scaleY
     self.is_active = true
     self.wobble_seed = love.math.random() * 2 * math.pi
+    -- look_left_texture: the same face with the pupils to the left (J, Q, K only, set by get_card).
+    -- gaze_left / gaze_target / gaze_since: which of the two pictures is shown, which one the cursor asks
+    -- for, and since when (see get_texture).
+    self.look_left_texture = nil
+    self.gaze_left = false
+    self.gaze_target = false
+    self.gaze_since = 0
 
+    -- Returns the picture to draw. Jacks, queens and kings look at the cursor: when it is on the left of the
+    -- card their pupils move to the left, otherwise they look right; the change comes config.face_gaze_delay
+    -- seconds late, as if they noticed it only a moment later.
+    function self:get_texture()
+        if self.look_left_texture == nil or not horror.is_on("face_gaze_enabled") then
+            return self.texture
+        end
 
-    -- Draws the card. With is_wobble (and wobble enabled, card at rest) it sways and bobs: t is the time
+        local mouse_x = love.mouse.getPosition()
+        local wants_left = mouse_x < self.x + self.texture:getWidth() * self.scaleX / 2
+        local now = love.timer.getTime()
+
+        if wants_left ~= self.gaze_target then
+            self.gaze_target = wants_left
+            self.gaze_since = now
+        end
+
+        if self.gaze_target ~= self.gaze_left and now - self.gaze_since >= config.face_gaze_delay then
+            self.gaze_left = self.gaze_target
+        end
+
+        return self.gaze_left and self.look_left_texture or self.texture
+    end
+
+    -- Draws the card (see get_texture for the picture). `nervousness` (default 1) multiplies the sway
+    -- and bob.
+    -- With is_wobble (and the card at rest) it sways and bobs: t is the time
     -- scaled by WOBBLE_SPEED plus the card's own phase, the angle follows sin(t) and the vertical bob
     -- sin(2t), i.e. twice as fast. Rotation needs the card centre as origin, so it is drawn at position +
     -- half size with origin (w/2, h/2). Flying cards are drawn without wobble so their motion stays clean.
-    function self:draw(is_wobble)
-        if is_wobble and self.is_active and WOBBLE_ENABLED then
-            local t = love.timer.getTime() * WOBBLE_SPEED + self.wobble_seed
-            local angle = math.sin(t) * WOBBLE_ANGLE
-            local bob = math.sin(t * 2) * WOBBLE_BOB
-            local w, h = self.texture:getWidth(), self.texture:getHeight()
+    function self:draw(is_wobble, nervousness)
+        local texture = self:get_texture()
 
-            love.graphics.draw(self.texture, self.x + w * self.scaleX / 2, self.y + h * self.scaleY / 2 + bob,
+        if is_wobble and self.is_active then
+            local amount = nervousness or 1
+            local t = love.timer.getTime() * WOBBLE_SPEED + self.wobble_seed
+            local angle = math.sin(t) * WOBBLE_ANGLE * amount
+            local bob = math.sin(t * 2) * WOBBLE_BOB * amount
+            local w, h = texture:getWidth(), texture:getHeight()
+
+            love.graphics.draw(texture, self.x + w * self.scaleX / 2, self.y + h * self.scaleY / 2 + bob,
                 angle, self.scaleX, self.scaleY, w / 2, h / 2)
         else
-            love.graphics.draw(self.texture, self.x, self.y, 0, self.scaleX, self.scaleY)
+            love.graphics.draw(texture, self.x, self.y, 0, self.scaleX, self.scaleY)
         end
     end
 

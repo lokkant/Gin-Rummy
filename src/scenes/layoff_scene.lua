@@ -14,6 +14,7 @@ require 'shaders'
 local love = require "love"
 local network = require "network"
 local ui = require "ui"
+local felt = require "client/felt"
 local layout = require "client/layout"
 local sounds = require "client/sounds"
 
@@ -415,11 +416,11 @@ local function draw_group(group, meld_index)
     love.graphics.setShader()
 end
 
--- Draws the captions, the settled cards (melds outlined), the cards that are still flying and the dragged
--- card on top of everything, and the FINISH button for the defender.
+-- Draws the table (both hands are open, so both are lit), the captions, the settled cards (melds
+-- outlined), the cards that are still flying and the dragged card on top of everything, and the FINISH
+-- button for the defender.
 function Scene.draw()
-    love.graphics.setColor(love.math.colorFromBytes(53, 101, 77, 255))
-    love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+    felt.draw(felt.OPEN_LIGHTS)
 
     local w = love.graphics.getWidth()
     local top_caption, bottom_caption, title
