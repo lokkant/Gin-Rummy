@@ -114,9 +114,26 @@ function network.poll()
     end
 end
 
--- Removes and returns the oldest received message, or nil if the inbox is empty.
-function network.pop()
-    return table.remove(inbox, 1)
+-- Returns the oldest unread message, or nil when there is none. Types listed in `skip` (a set such as
+-- {opponent_layoff = true}) stay in the inbox for another reader.
+function network.pop(skip)
+    for i, message in ipairs(inbox) do
+        if not (skip and skip[message.type]) then
+            return table.remove(inbox, i)
+        end
+    end
+    return nil
+end
+
+-- Removes and returns the oldest unread message of this type, or nil. The layoff scene reads its own
+-- messages this way and leaves the rest for the game scene.
+function network.take(message_type)
+    for i, message in ipairs(inbox) do
+        if message.type == message_type then
+            return table.remove(inbox, i)
+        end
+    end
+    return nil
 end
 
 -- True when an unprocessed message of this type is waiting in the inbox (the message stays there). The

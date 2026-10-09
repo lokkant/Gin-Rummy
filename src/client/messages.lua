@@ -57,7 +57,6 @@ local function reset_table(state)
     state.is_my_turn = false
     state.animations:cancel("round_result")
     state.round_result = nil
-    state.waiting_for_layoff = false
 end
 
 -- Goes back to the menu after LEAVE_DELAY seconds, so the player can read why. The animation is tagged
@@ -159,23 +158,51 @@ function handlers.new_round(state)
     reset_table(state)
 end
 
--- We knocked and the opponent is laying off cards: show the waiting banner, no moves meanwhile.
-function handlers.waiting_for_layoff(state)
-    state.waiting_for_layoff = true
-    state.is_my_turn = false
-end
-
--- The opponent knocked: switch to the layoff scene to attach cards to the knocker's melds. It gets the
--- melds and our hand cards, and returns with SceneManager.set("game"), so this scene keeps its state.
+-- Someone knocked without gin: both players switch to the layoff scene (the message says which role we
+-- have and carries all the cards, which are face up now). The scene returns with SceneManager.set("game"),
+-- so this scene keeps its state.
 function handlers.layoff_phase(state, message)
     state.dragging_card = nil
-    SceneManager.switch("layoff", message.combinations, state.player_hand.cards)
+    state.is_my_turn = false
+    SceneManager.switch("layoff", message)
 end
 
--- The round was scored: show the banner, update the totals. The banner is a blocking animation, so the next
--- deal waits until it has been seen; "round_result" is cancelled first in case a previous banner is still
--- up.
+-- Shows what the round ended with: the opponent's cards turn face up with their melds outlined, and the
+-- cards the defender laid off leave the hand they came from.
+local function reveal_hands(state, message)
+    if message.opponent_cards then
+        local cards = {}
+        local by_name = {}
+
+        for _, name in ipairs(message.opponent_cards) do
+            local card = get_card(name)
+            by_name[name] = card
+            table.insert(cards, card)
+        end
+
+        local melds = {}
+        for _, meld_names in ipairs(message.opponent_melds or {}) do
+            local meld = {}
+            for _, name in ipairs(meld_names) do
+                table.insert(meld, by_name[name])
+            end
+            table.insert(melds, meld)
+        end
+
+        state.opponent_hand:reveal(cards, melds)
+    end
+
+    for _, name in ipairs(message.laid_off_cards or {}) do
+        local rank, suit = string.match(name, "^([%w]+)_([%a]+)$")
+        state.player_hand:remove_card(rank, suit)
+    end
+end
+
+-- The round was scored: show the banner, update the totals and reveal the hands. The banner is a blocking
+-- animation, so the next deal waits until it has been seen; "round_result" is cancelled first in case a
+-- previous banner is still up.
 function handlers.round_result(state, message)
+    reveal_hands(state, message)
     state.round_result = message
     state.animations:cancel("round_result")
     state.animations:delay(ROUND_RESULT_DURATION, {
@@ -188,7 +215,6 @@ function handlers.round_result(state, message)
     state.my_total_score = message.your_total_score
     state.opponent_total_score = message.opponent_total_score
     state.is_my_turn = false
-    state.waiting_for_layoff = false
 end
 
 -- The match ended: show the end screen with the rematch question. If the opponent disconnected there is
@@ -199,7 +225,6 @@ function handlers.game_over(state, message)
     state.is_paused = false
     state.is_my_turn = false
     state.dragging_card = nil
-    state.waiting_for_layoff = false
     state.rematch_response_sent = false
     state.opponent_left = false
 
@@ -236,14 +261,19 @@ local function handle(state, message)
     end
 end
 
--- Moves everything the server sent since the last frame into the queue (nothing is handled here).
+-- Messages that only the layoff scene understands; they stay in the network inbox until it reads them.
+local LAYOFF_ONLY = {opponent_layoff = true}
+
+-- Moves everything the server sent since the last frame into the queue (nothing is handled here). The
+-- layoff scene's own messages are left alone: the one that switches to it may still be waiting in the
+-- queue while the next ones are already here.
 function messages.receive(state)
     network.poll()
 
-    local message = network.pop()
+    local message = network.pop(LAYOFF_ONLY)
     while message do
         table.insert(state.pending_messages, message)
-        message = network.pop()
+        message = network.pop(LAYOFF_ONLY)
     end
 end
 

@@ -1,12 +1,13 @@
 -- The main game scene (client): owns the shared `state` table and wires the client/* modules together -
--- network messages (messages), mouse input (input), layout, HUD and overlays. load(ip) connects to the
--- server at once. It implements the scene API of SceneManager (load, resize, mouse/key callbacks, update,
--- draw).
+-- network messages (messages), mouse input (input), layout, HUD and overlays. load(ip, options) connects
+-- to the server at once; when the player hosts, the server runs in this process (see start_menu.lua). It
+-- implements the scene API of SceneManager (load, resize, mouse/key callbacks, update, draw).
 
 require 'animations'
 
 local love = require "love"
 local network = require "network"
+local server = require "server"
 local layout = require "client/layout"
 local knock = require "client/knock"
 local hud = require "client/hud"
@@ -19,14 +20,22 @@ local Scene = {}
 -- The shared game state, created by Scene.load.
 local state
 
--- Closes the connection and goes to the connect menu.
+-- Closes the connection and goes back: a host also shuts its server down and returns to the start menu,
+-- a joining player returns to the address menu.
 local function leave_to_menu()
     network.close()
-    SceneManager.switch("menu")
+
+    if state ~= nil and state.hosting then
+        server.stop()
+        SceneManager.switch("start")
+    else
+        SceneManager.switch("menu")
+    end
 end
 
 -- Creates the state table that all client/* modules read and write:
 --   server_address, leave_to_menu   used by the connection overlays and for leaving
+--   hosting, host_addresses         we run the server: the addresses the other player can join with
 --   animations                      Animations() scheduler: flying cards, pauses, waiting for the wipe
 --   pending_messages                server messages waiting for messages.process_next
 --   has_started_first_game          true once the first "new_game" was handled
@@ -35,17 +44,18 @@ end
 --   is_paused                       the pause menu is open (ESC)
 --   round_result                    the round_result message while its banner is shown
 --   my_total_score, opponent_total_score   totals shown by the HUD
---   waiting_for_layoff              we knocked and wait for the opponent's layoff
 --   rematch_response_sent, opponent_left   state of the rematch question
 --   dragging_card, drag_offset_x/y  the card being dragged and where it was grabbed
 --   hovered_card                    the hand card lifted by the cursor
 --   taken_from_discard              card taken from the discard pile this turn (can't be thrown back)
 --   draw_requested                  a stock draw was sent and its answer is pending
 -- layout.create adds deck, discard_pile, player_hand, opponent_hand, opponent_card_reference and layout.
-local function new_state(address)
+local function new_state(address, options)
     return {
         server_address = address,
         leave_to_menu = leave_to_menu,
+        hosting = options.hosting == true,
+        host_addresses = options.addresses or {},
         animations = Animations(),
 
         pending_messages = {},
@@ -58,7 +68,6 @@ local function new_state(address)
         game_over_info = nil,
         my_total_score = 0,
         opponent_total_score = 0,
-        waiting_for_layoff = false,
         rematch_response_sent = false,
         opponent_left = false,
 
@@ -71,12 +80,16 @@ local function new_state(address)
     }
 end
 
--- Scene entry (SceneManager.switch("game", ip)): connects to the server, creates a fresh state and builds
--- the table. The connection result is shown by the overlays while the status is "connecting".
-function Scene.load(ip)
+-- Scene entry (SceneManager.switch("game", ip, options)): connects to the server, creates a fresh state and
+-- builds the table. options (optional): hosting = true when the server runs in this process, addresses =
+-- the list of "ip:port" strings to show the other player. The connection result is shown by the overlays
+-- while the status is "connecting".
+function Scene.load(ip, options)
+    options = options or {}
+
     network.connect(ip)
 
-    state = new_state(ip)
+    state = new_state(ip, options)
 
     hud.load(state)
     layout.create(state)

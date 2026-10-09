@@ -1,9 +1,12 @@
--- Authoritative game server. Runs only with `love . --server` (main.lua loads this module as the "server"
--- scene). It owns the two player peers, the current Game (game.lua) and the rematch votes: every client
--- message is validated here / in Game, and the clients only mirror what the server sends back.
+-- Authoritative game server. It runs either alone (`love . --server [--port N]`) or inside a player's
+-- game when they choose "Host a game" (scenes/start_menu.lua); in both cases main.lua calls update() every
+-- frame while it is running. It owns the two player peers, the current Game (game.lua) and the rematch
+-- votes: every client message is validated here / in Game, and the clients only mirror what the server
+-- sends back.
 --
 -- MESSAGE PROTOCOL
--- Transport: ENet on port 6789, one JSON object per packet (dkjson): {"type": "<name>", ...fields}.
+-- Transport: ENet (default port 6789, chosen when the server starts), one JSON object per packet (dkjson):
+-- {"type": "<name>", ...fields}.
 -- A card is its name "<rank>_<suit>", e.g. "10_heart", "A_spade" (ranks 2-10 J Q K A; suits heart,
 -- diamond, club, spade). A meld is a list of card names; "combinations" is a list of melds.
 -- Fields shown in [brackets] are optional. Invalid or out-of-turn requests are silently ignored.
@@ -14,9 +17,10 @@
 --   get_card_from_discard_pile  -                         take the top discard card (draw phase)
 --   put_card_to_discard_pile    card                      discard a card, ends the turn (discard phase)
 --   knock                       discard, combinations     discard `discard` and knock with these melds
---   finish_layoff               layoffs                   answer to a knock; layoffs is a list of
---                                                         {card, meld_index}, meld_index = 1-based position
---                                                         in the knocker's combinations
+--   layoff_card                 card, meld_index          layoff phase, defender only: attach a card to the
+--                                                         meld_index-th meld (1-based position in the
+--                                                         knocker's combinations)
+--   finish_layoff               -                         layoff phase, defender only: no more cards to lay
 --   rematch_response            answer                    boolean, only valid after game_over
 --
 -- Server -> client (to one player unless noted)
@@ -30,40 +34,48 @@
 --   opponent_get_card_from_discard_pile   -                the opponent took the top discard card
 --   opponent_place_card_to_discard_pile   card             the opponent discarded this card
 --   knock_discard                         card, mine       both: the knocker's discard; mine = you knocked
---   waiting_for_layoff                    -                to the knocker: the opponent is laying off
---   layoff_phase                          combinations     to the opponent: the knocker's melds
+--   layoff_phase                          role, combinations, knocker_deadwood, defender_hand
+--                                                          both (not after a gin): role is "knocker" or
+--                                                          "defender"; the knocker's melds and leftover
+--                                                          cards and the defender's hand, all face up
+--   opponent_layoff                       card, meld_index to the knocker: the defender attached this card
+--                                                          to that meld
 --   round_result                          you_knocked, is_gin, is_undercut, [is_draw], your_deadwood,
---                                         opponent_deadwood, laid_off_value, your_round_score,
+--                                         opponent_deadwood, laid_off_value, laid_off_cards,
+--                                         opponent_cards, opponent_melds, your_round_score,
 --                                         opponent_round_score, your_total_score, opponent_total_score
 --                                                          the round is scored (each player gets their
---                                                          own point of view; is_draw only for a draw)
+--                                                          own point of view; is_draw only for a draw).
+--                                                          opponent_cards / opponent_melds: the opponent's
+--                                                          final hand, to be shown face up with its melds;
+--                                                          laid_off_cards leave the defender's hand
 --   game_over                             you_won, [opponent_disconnected]
 --                                                          the match ended (or the opponent left)
 --   opponent_declined_rematch             -                the opponent said no / left after game_over
 --
 -- Typical order: new_game, then 10 x (get_card_from_deck + opponent_get_card_from_deck),
 -- update_discard_pile, is_my_turn; turns repeat (draw, then discard or knock). A knock sends knock_discard,
--- then either round_result (gin) or waiting_for_layoff + layoff_phase and, after finish_layoff,
--- round_result. After round_result: new_round and a new deal, or game_over once someone reached 100 points.
+-- then either round_result (gin) or layoff_phase to both (the defender sends layoff_card any number of
+-- times, the knocker gets opponent_layoff for each) and, after finish_layoff, round_result. After
+-- round_result: new_round and a new deal, or game_over once someone reached 100 points.
 
 require 'server_deck'
 require 'game'
 
 local enet = require "enet"
-local love = require "love"
 local json = require "dkjson"
 
 -- If console output shows up late when stdout is redirected, call io.stdout:setvbuf("line") here.
 
--- ENet host; the two seats (ENet peers, nil while empty); the running Game; rematch_state[peer] = true
--- once that player answered "yes" after the match ended.
+-- ENet host (nil while the server is not running); the two seats (ENet peers, nil while empty); the
+-- running Game; rematch_state[peer] = true once that player answered "yes" after the match ended.
 local host
 local player1
 local player2
 local game
 local rematch_state
 
--- The scene table handed to the SceneManager (load/update only; there is nothing to draw).
+-- The module table: start / stop / is_running / update.
 local Server = {}
 
 -- Starts a fresh match for the two seated players: new Game with a newly shuffled deck, clears the rematch
@@ -177,8 +189,10 @@ local function handle_message(peer, data)
         game:get_card_from_discard_pile(peer)
     elseif message.type == "knock" then
         game:knock(peer, message.discard, message.combinations)
+    elseif message.type == "layoff_card" then
+        game:layoff_card(peer, message.card, message.meld_index)
     elseif message.type == "finish_layoff" then
-        game:finish_layoff(peer, message.layoffs)
+        game:finish_layoff(peer)
     end
 end
 
@@ -208,20 +222,47 @@ local function handle_event(event)
     end
 end
 
--- Scene load: listens on port 6789 on all interfaces; quits with exit code 1 if the port is taken.
-function Server.load()
-    host = enet.host_create("*:6789")
+-- Starts listening on `port` (default 6789) on all interfaces and forgets any previous match. Returns true,
+-- or false and a message when the port can't be used (e.g. another server already holds it).
+function Server.start(port)
+    port = port or 6789
 
-    if host == nil then
-        print("ERROR: can't start the server on port 6789 (is another server already running?)")
-        love.event.quit(1)
-        return
+    Server.stop()
+
+    local ok, new_host = pcall(enet.host_create, "*:" .. port)
+    if not ok or new_host == nil then
+        print("ERROR: can't start the server on port " .. port .. " (is another server already running?)")
+        return false, "Can't use port " .. port .. ": it is probably taken"
     end
 
-    print("Server started on port 6789")
+    host = new_host
+    print("Server started on port " .. port)
+    return true
 end
 
--- Scene update: drains all pending ENet events (non-blocking). Each event runs under pcall so one bad
+-- Disconnects both players at once and closes the port; safe to call when nothing is running.
+function Server.stop()
+    if host == nil then return end
+
+    for _, peer in ipairs({player1 or false, player2 or false}) do
+        if peer then pcall(peer.disconnect_now, peer) end
+    end
+    pcall(host.flush, host)
+    if host.destroy then pcall(host.destroy, host) end
+
+    host = nil
+    player1 = nil
+    player2 = nil
+    game = nil
+    rematch_state = nil
+end
+
+-- True between start() and stop().
+function Server.is_running()
+    return host ~= nil
+end
+
+-- Per-frame work: drains all pending ENet events (non-blocking). Each event runs under pcall so one bad
 -- message cannot take the whole server down.
 function Server.update()
     if host == nil then return end

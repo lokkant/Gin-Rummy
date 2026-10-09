@@ -1,6 +1,6 @@
 -- Connect menu scene (client): a text field for "host:port" with validation, ENTER starts the game scene
--- (SceneManager.switch("game", address)), and a QUIT button. main.lua currently connects straight to a
--- local server, so this scene is only reached through "back to menu". `require "main"` returns the
+-- (SceneManager.switch("game", address)), a BACK button to the start menu and a QUIT button. It is reached
+-- from the start menu ("Join a game") and when a joined game is left. `require "main"` returns the
 -- SceneManager.
 
 local love = require "love"
@@ -20,19 +20,23 @@ local form = {
     error = nil
 }
 
-local QUIT_BUTTON_WIDTH = 200
-local QUIT_BUTTON_HEIGHT = 50
+local BUTTON_WIDTH = 200
+local BUTTON_HEIGHT = 50
+local BUTTON_GAP = 20
 
--- Returns the rect of the QUIT button, below the text field.
-local function get_quit_button()
+local DARK_RED = {0.6, 0.2, 0.2, 1}
+local GRAY = {0.3, 0.3, 0.3, 1}
+
+-- Returns the rects of the BACK and QUIT buttons: side by side below the text field.
+local function get_buttons()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     local field_y = h / 2 - form.height / 2
+    local y = field_y + form.height + 70
+    local x = w / 2 - (BUTTON_WIDTH * 2 + BUTTON_GAP) / 2
 
     return {
-        x = w / 2 - QUIT_BUTTON_WIDTH / 2,
-        y = field_y + form.height + 70,
-        w = QUIT_BUTTON_WIDTH,
-        h = QUIT_BUTTON_HEIGHT
+        back = {x = x, y = y, w = BUTTON_WIDTH, h = BUTTON_HEIGHT},
+        quit = {x = x + BUTTON_WIDTH + BUTTON_GAP, y = y, w = BUTTON_WIDTH, h = BUTTON_HEIGHT}
     }
 end
 
@@ -79,8 +83,10 @@ end
 function Scene.load()
     love.keyboard.setTextInput(true)
 
-    font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 28)
-    label_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 22)
+    if font == nil then
+        font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 28)
+        label_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 22)
+    end
 
     form.text = ""
     form.error = nil
@@ -129,7 +135,11 @@ end
 function Scene.mousepressed(x, y, button)
     if button ~= 1 then return end
 
-    if ui.point_in_rect(x, y, get_quit_button()) then
+    local buttons = get_buttons()
+
+    if ui.point_in_rect(x, y, buttons.back) then
+        SceneManager.switch("start")
+    elseif ui.point_in_rect(x, y, buttons.quit) then
         love.event.quit()
     end
 end
@@ -171,14 +181,11 @@ function Scene.draw()
         love.graphics.printf(form.error, 0, field_y + form.height + 20, w, "center")
     end
 
-    local quit_button = get_quit_button()
-
-    love.graphics.setColor(0.6, 0.2, 0.2, 1)
-    love.graphics.rectangle("fill", quit_button.x, quit_button.y, quit_button.w, quit_button.h, 8, 8)
+    local buttons = get_buttons()
 
     love.graphics.setFont(label_font)
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf("QUIT", quit_button.x, quit_button.y + quit_button.h / 2 - 11, quit_button.w, "center")
+    ui.draw_button(buttons.back, "BACK", GRAY)
+    ui.draw_button(buttons.quit, "QUIT", DARK_RED)
 
     love.graphics.setColor(1, 1, 1)
 end

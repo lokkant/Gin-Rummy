@@ -6,6 +6,11 @@
 
 local love = require "love"
 
+-- Outline colours (RGB) of the 1st, 2nd and 3rd meld of a hand: blue, green, red. Three are enough because
+-- 11 cards hold at most three melds. Used with highlight_card_shader for the player's and the revealed
+-- opponent's hand.
+combination_colors = {{0.0, 0.0, 1.0}, {0.0, 1.0, 0.0}, {1.0, 0.0, 0.0}}
+
 -- Shine sweep for the card being dragged: a soft white diagonal band crosses the card every 2 seconds.
 dragging_card_shader = love.graphics.newShader([[
 // time: seconds, set from Lua every frame.

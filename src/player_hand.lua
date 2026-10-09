@@ -10,12 +10,6 @@ require 'best_melds'
 
 local love = require "love"
 
--- Outline colours (RGB) of the 1st, 2nd and 3rd meld of the shown arrangement: blue, green, red.
--- Three are enough because 11 cards hold at most three melds.
-local FIRST_COMBINATION_COLOR = {0.0, 0.0, 1.0}
-local SECOND_COMBINATION_COLOR = {0.0, 1.0, 0.0}
-local THIRD_COMBINATION_COLOR = {1.0, 0.0, 0.0}
-
 -- Creates an empty hand centred on x with the top of its cards at y.
 function PlayerHand(x, y)
     -- best_combinations: all meld arrangements with the lowest deadwood ({{}} = one arrangement without
@@ -233,7 +227,7 @@ function PlayerHand(x, y)
         love.graphics.setShader(highlight_card_shader)
         highlight_card_shader:send("time", love.timer.getTime())
 
-        local colors = {FIRST_COMBINATION_COLOR, SECOND_COMBINATION_COLOR, THIRD_COMBINATION_COLOR}
+        local colors = combination_colors
         local count = 1
 
         for i, combination in ipairs(self.best_combinations[self.index_of_combination]) do

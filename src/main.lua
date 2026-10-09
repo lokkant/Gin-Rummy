@@ -1,10 +1,14 @@
 -- Entry point of the LOVE game: global UI scale, the SceneManager (scene registry + screen wipe) and the
 -- love.* callbacks that forward everything to the current scene. Runs for both the client and the server:
--- `love . --server` registers only the "server" scene (server.lua), otherwise the client scenes are
--- registered (scenes/*.lua). A scene is a table with load/update/draw and optional input callbacks. Returns
--- SceneManager (also a global) so scenes can `require "main"` it.
+-- `love . --server [--port N]` only starts the game server (server.lua) without any scene; otherwise the
+-- client scenes are registered (scenes/*.lua) and the start menu opens. `love . --connect host:port` skips
+-- the menus and joins that server at once (a shortcut for development). A scene is a table with
+-- load/update/draw and optional input callbacks. A server started by the "Host a game" button runs inside
+-- the client and is updated here every frame, whatever scene is active. Returns SceneManager (also a
+-- global) so scenes can `require "main"` it.
 
 local love = require "love"
+local server = require "server"
 
 
 -- `scale` (set in update_scale) equals BASE_SCALE in a window of the reference size and follows the window.
@@ -159,37 +163,60 @@ local function draw_transition()
     love.graphics.setColor(1, 1, 1, 1)
 end
 
--- LOVE entry point. `arg` is the command line; `--server` starts the headless server instead of the game.
-function love.load(arg)
-    local is_server = false
-    for _, value in ipairs(arg) do
-        if value == "--server" then
-            is_server = true
+-- Returns the value after the command line option `name` (e.g. "--port 6790" -> "6790"), or nil.
+local function get_option(arg, name)
+    for i, value in ipairs(arg) do
+        if value == name then
+            return arg[i + 1]
         end
     end
+    return nil
+end
 
-    if is_server then
-        local server = require "server"
-        SceneManager.add("server", server)
-        SceneManager.switch("server")
+-- Returns true if the command line has the flag `name`.
+local function has_flag(arg, name)
+    for _, value in ipairs(arg) do
+        if value == name then
+            return true
+        end
+    end
+    return false
+end
+
+-- Startup: `--server` starts the headless game server and exits with code 1 if the port is taken. Otherwise
+-- the client scenes are registered and the start menu (or, with --connect, the game) opens.
+function love.load(arg)
+    if has_flag(arg, "--server") then
+        if not server.start(tonumber(get_option(arg, "--port"))) then
+            love.event.quit(1)
+        end
         return
     end
 
     local game_client = require "scenes/game_client"
     local connect_menu = require "scenes/connect_menu"
     local layoff_scene = require "scenes/layoff_scene"
+    local start_menu = require "scenes/start_menu"
 
     SceneManager.add("game", game_client)
     SceneManager.add("menu", connect_menu)
     SceneManager.add("layoff", layoff_scene)
+    SceneManager.add("start", start_menu)
 
-
-    SceneManager.switch("menu")
-    -- SceneManager.switch("game", "127.0.0.1:6789")
+    local address = get_option(arg, "--connect")
+    if address then
+        SceneManager.switch("game", address)
+    else
+        SceneManager.switch("start")
+    end
 end
 
 -- Per-frame update: the current scene first, then the wipe.
 function love.update(dt)
+    if server.is_running() then
+        server.update()
+    end
+
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
     if scene and scene.update then
@@ -266,9 +293,11 @@ function love.keypressed(key)
     end
 end
 
--- Closes the ENet connection on exit so the server notices the disconnect immediately.
+-- Closes the ENet connection (and a server hosted by this player) on exit so the other side notices the
+-- disconnect immediately.
 function love.quit()
     require("network").close()
+    server.stop()
 end
 
 -- Recomputes the global scale first, then lets the scene re-layout itself.

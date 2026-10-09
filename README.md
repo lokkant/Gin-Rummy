@@ -8,12 +8,21 @@ Use src/build.bat to build the project.
 
 ## Run
 
-Run the program with the `--server` flag to start the server and without arguments for the client.
+Run the program without arguments for the game. Two more options exist:
+
+- `--server [--port N]` starts only the game server (port 6789 by default), without a window.
+- `--connect host:port` skips the menus and joins that server at once.
 
 ## Connect
 
-For the game to work, users and the server must be on the local network.
-In the menu, users must enter the server’s IP address and the port on which it is listening for connections.
+The start menu offers two ways to play:
+
+- **Join a game**: enter the IP address and the port of the other player's (or a dedicated) server.
+- **Host a game**: choose a port and the game starts a server on your computer and puts you in the room.
+  The screen shows the address the other player has to enter. In the same network or a VPN use the first
+  address; over the internet the (UDP) port has to be forwarded on your router.
+
+For the game to work, users and the server must be able to reach each other.
 
 <img width="1919" height="1199" alt="изображение" src="https://github.com/user-attachments/assets/e26aeda8-8997-45b5-b1cd-420c5cba1570" />
 

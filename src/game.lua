@@ -55,7 +55,9 @@ function Game(player1, player2, deck)
     --   take_card           this turn's draw already happened
     --   is_over_move        the discard is done, so next_turn() may pass the turn
     --   is_new_round        a deal is pending (see start_game)
-    --   pending_knock       {knocker, opponent, knocker_deadwood, knocker_combinations} during layoff
+    --   pending_knock       during layoff: {knocker, opponent, knocker_deadwood, knocker_combinations,
+    --                       meld_cards (the knocker's melds as card objects, grown by every layoff),
+    --                       laid_off_cards (names, in order), laid_off_value (points)}
     --   taken_from_discard  the card picked up from the discard pile this turn; it can't be discarded again
     --                       (otherwise taking it would be a free pass)
     self.player1 = player1
@@ -76,7 +78,8 @@ function Game(player1, player2, deck)
     --   "draw"       the current player must take a card from the stock or the discard pile -> "discard"
     --   "discard"    must discard (-> opponent's "draw", or a draw round if the stock is almost empty)
     --                or knock (gin: scored at once; otherwise -> "layoff")
-    --   "layoff"     waiting for the opponent's finish_layoff; the round is then scored -> next round "draw"
+    --   "layoff"     the opponent lays cards onto the knocker's melds (layoff_card) until finish_layoff;
+    --                the round is then scored -> next round "draw"
     --   "round_over" transient: finalize_draw sets it just before start_new_round resets the phase to "draw"
     --   "over"       someone reached WINNING_SCORE; the Game is dead until a rematch creates a new one
     self.phase = "draw"
@@ -287,8 +290,53 @@ function Game(player1, player2, deck)
         self:start_game()
     end
 
+    -- What `player` gets to see of the opponent's hand when a round ends: opponent_cards (all card names:
+    -- the melds first, then the deadwood, every group in ascending order) and opponent_melds (the melds as
+    -- lists of names, taken from the best melding of that hand). The clients turn the cards face up.
+    function self:reveal_fields(player)
+        local hand_cards = self:hand_cards_data(self:get_opponent(player))
+        local best = best_combinations(hand_cards)[1]
+
+        -- Orders cards by rank, then suit.
+        local function ascending(a, b)
+            return a:is_lesser_than(b)
+        end
+
+        local cards = {}
+        local melds = {}
+        local in_meld = {}
+
+        for _, meld in ipairs(best) do
+            table.sort(meld, ascending)
+
+            local names = {}
+            for _, card in ipairs(meld) do
+                local name = card.rank .. "_" .. card.suit
+                in_meld[name] = true
+                table.insert(names, name)
+                table.insert(cards, name)
+            end
+            table.insert(melds, names)
+        end
+
+        local deadwood = {}
+        for _, card in ipairs(hand_cards) do
+            if not in_meld[card.rank .. "_" .. card.suit] then
+                table.insert(deadwood, card)
+            end
+        end
+        table.sort(deadwood, ascending)
+
+        for _, card in ipairs(deadwood) do
+            table.insert(cards, card.rank .. "_" .. card.suit)
+        end
+
+        return {opponent_cards = cards, opponent_melds = melds}
+    end
+
     -- Ends the round as a draw: nobody scores. Both players get a round_result with is_draw = true (their
-    -- deadwood is shown for information only), then the next round starts at once.
+    -- deadwood is shown for information only) and the opponent's cards face up, then the next round starts
+    -- at once.
     function self:finalize_draw()
         self.phase = "round_over"
 
@@ -297,6 +345,8 @@ function Game(player1, player2, deck)
             local opponent_player = self:get_opponent(player)
             local _, own_deadwood = best_combinations(self:hand_cards_data(player))
             local _, opponent_deadwood = best_combinations(self:hand_cards_data(opponent_player))
+
+            local reveal = self:reveal_fields(player)
 
             return json.encode({
                 type = "round_result",
@@ -307,6 +357,9 @@ function Game(player1, player2, deck)
                 your_deadwood = own_deadwood,
                 opponent_deadwood = opponent_deadwood,
                 laid_off_value = 0,
+                laid_off_cards = {},
+                opponent_cards = reveal.opponent_cards,
+                opponent_melds = reveal.opponent_melds,
                 your_round_score = 0,
                 opponent_round_score = 0,
                 your_total_score = self:get_total_score(player),
@@ -337,9 +390,13 @@ function Game(player1, player2, deck)
 
     -- Scores a knock and notifies both players, then ends the match or starts the next round.
     -- knocker_deadwood / opponent_deadwood are final (the opponent's already reduced by layoffs); is_gin:
-    -- the knocker had 0 deadwood; laid_off_value: points of the cards laid off (shown to the players only).
-    function self:finalize_round(knocker, opponent_player, knocker_deadwood, opponent_deadwood, is_gin, laid_off_value)
+    -- the knocker had 0 deadwood; laid_off_value / laid_off_cards: points and names of the cards laid off
+    -- (shown to the players only, the clients also drop those cards from the defender's hand). The hands
+    -- are revealed in the message: the cards of the opponent, face up, with their melds.
+    function self:finalize_round(knocker, opponent_player, knocker_deadwood, opponent_deadwood, is_gin,
+                                 laid_off_value, laid_off_cards)
         laid_off_value = laid_off_value or 0
+        laid_off_cards = laid_off_cards or {}
 
         local is_undercut = false
         local knocker_round_score = 0
@@ -362,6 +419,9 @@ function Game(player1, player2, deck)
         self:add_score(opponent_player, opponent_round_score)
 
         -- The same numbers for both players, each from their own point of view (your_* / opponent_*).
+        local knocker_reveal = self:reveal_fields(knocker)
+        local opponent_reveal = self:reveal_fields(opponent_player)
+
         local knocker_message = json.encode({
             type = "round_result",
             you_knocked = true,
@@ -370,6 +430,9 @@ function Game(player1, player2, deck)
             your_deadwood = knocker_deadwood,
             opponent_deadwood = opponent_deadwood,
             laid_off_value = laid_off_value,
+            laid_off_cards = laid_off_cards,
+            opponent_cards = knocker_reveal.opponent_cards,
+            opponent_melds = knocker_reveal.opponent_melds,
             your_round_score = knocker_round_score,
             opponent_round_score = opponent_round_score,
             your_total_score = self:get_total_score(knocker),
@@ -383,6 +446,9 @@ function Game(player1, player2, deck)
             your_deadwood = opponent_deadwood,
             opponent_deadwood = knocker_deadwood,
             laid_off_value = laid_off_value,
+            laid_off_cards = laid_off_cards,
+            opponent_cards = opponent_reveal.opponent_cards,
+            opponent_melds = opponent_reveal.opponent_melds,
             your_round_score = opponent_round_score,
             opponent_round_score = knocker_round_score,
             your_total_score = self:get_total_score(opponent_player),
@@ -421,8 +487,9 @@ function Game(player1, player2, deck)
     -- Knock request: `player` throws away `discard_name` and claims the melds in `combinations` (list of
     -- lists of card names). Everything is checked against the real hand and an invalid request is silently
     -- ignored. Deadwood = cards that are neither in a meld nor the discard; it must be <= 10. Deadwood 0 is
-    -- gin: no layoff, the round is scored at once. Otherwise phase "layoff": the knocker waits
-    -- ("waiting_for_layoff") and the opponent gets the melds to lay off onto ("layoff_phase").
+    -- gin: no layoff, the round is scored at once. Otherwise phase "layoff": both players get
+    -- "layoff_phase" (the knocker's melds and deadwood and the opponent's hand, all face up because the
+    -- round is decided) and the opponent lays cards off with layoff_card.
     function self:knock(player, discard_name, combinations)
         if self.phase ~= "discard" or self.is_over_game then return end
         if player ~= self:current_turn() then return end
@@ -499,82 +566,93 @@ function Game(player1, player2, deck)
             return
         end
 
-        -- finish_layoff reads everything it needs from pending_knock.
+        -- Working copies of the knocker's melds as card objects; every accepted layoff extends one of
+        -- them, so a later card can attach to the extended meld (e.g. to both ends of a run).
+        local meld_cards = {}
+        for i, meld in ipairs(combinations) do
+            meld_cards[i] = {}
+            for _, name in ipairs(meld) do
+                table.insert(meld_cards[i], get_card_data(name))
+            end
+        end
+
         self.phase = "layoff"
         self.pending_knock = {
             knocker = player,
             opponent = opponent_player,
             knocker_deadwood = knocker_deadwood,
-            knocker_combinations = combinations
+            knocker_combinations = combinations,
+            meld_cards = meld_cards,
+            laid_off_cards = {},
+            laid_off_value = 0
         }
 
-        local waiting_message = json.encode({type = "waiting_for_layoff"})
-        local layoff_message = json.encode({type = "layoff_phase", combinations = combinations})
+        -- Everything the layoff screen needs: the melds, the knocker's leftover cards and the
+        -- opponent's hand. Each player also learns which role they have.
+        local deadwood_names = {}
+        for _, card_name in ipairs(hand) do
+            if not used[card_name] then
+                table.insert(deadwood_names, card_name)
+            end
+        end
 
-        print("Send:", waiting_message)
-        print("Send:", layoff_message)
-        player:send(waiting_message)
-        opponent_player:send(layoff_message)
+        -- The layoff_phase JSON for one of the two roles; the payload is the same for both.
+        local function build_layoff_message(role)
+            return json.encode({
+                type = "layoff_phase",
+                role = role,
+                combinations = combinations,
+                knocker_deadwood = deadwood_names,
+                defender_hand = opponent_hand
+            })
+        end
+
+        local knocker_message = build_layoff_message("knocker")
+        local defender_message = build_layoff_message("defender")
+        print("Send:", knocker_message)
+        print("Send:", defender_message)
+        player:send(knocker_message)
+        opponent_player:send(defender_message)
     end
 
-    -- Layoff phase: the knocker's opponent sends `layoffs`, a list of {card, meld_index} meaning "attach
-    -- this card to the meld_index-th knocker meld", in the order the cards were laid. Each entry must be a
-    -- card from the opponent's hand, used once, onto an existing meld that it extends into a valid set/run.
-    -- Invalid entries are skipped. Then the opponent's remaining cards are melded again to get their
-    -- deadwood and the round is scored. Only accepted from the opponent during the "layoff" phase.
-    function self:finish_layoff(player, layoffs)
+    -- Layoff phase: the knocker's opponent attaches `card_name` to the meld_index-th knocker meld (1-based
+    -- position in the knock's combinations). Accepted only if the card is in their hand and extends that
+    -- meld, as it is now, into a valid set/run; the knocker is told ("opponent_layoff") so their screen can
+    -- animate it. Invalid requests are ignored.
+    function self:layoff_card(player, card_name, meld_index)
         local pending = self.pending_knock
         if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then return end
-        if type(layoffs) ~= "table" then layoffs = {} end
+        if type(card_name) ~= "string" or type(meld_index) ~= "number" then return end
 
-        local opponent_hand = self:get_hand(player)
+        local hand = self:get_hand(player)
+        local meld = pending.meld_cards[meld_index]
+        if meld == nil or not hand_contains(hand, card_name) then return end
 
-        -- Working copies of the knocker's melds; a successful layoff extends its copy, so a later card can
-        -- attach to the extended meld (e.g. to both ends of a run).
-        local meld_cards_by_index = {}
-        for i, meld in ipairs(pending.knocker_combinations) do
-            local cards = {}
-            for _, name in ipairs(meld) do
-                table.insert(cards, get_card_data(name))
-            end
-            meld_cards_by_index[i] = cards
-        end
+        local card = get_card_data(card_name)
+        if not can_extend_meld(card, meld) then return end
 
-        local laid_off_value = 0
-        local used = {}
+        table.insert(meld, card)
+        remove_card_from_hand(hand, card_name)
+        table.insert(pending.laid_off_cards, card_name)
+        pending.laid_off_value = pending.laid_off_value + card_value_from_name(card_name)
 
-        for _, layoff in ipairs(layoffs) do
-            local card_name = type(layoff) == "table" and layoff.card or nil
-            local meld_index = type(layoff) == "table" and layoff.meld_index or nil
+        local message = json.encode({type = "opponent_layoff", card = card_name, meld_index = meld_index})
+        print("Send:", message)
+        pending.knocker:send(message)
+    end
 
-            if type(card_name) == "string" and type(meld_index) == "number" and
-               not used[card_name] and hand_contains(opponent_hand, card_name) and
-               meld_cards_by_index[meld_index] ~= nil then
+    -- Layoff phase: the knocker's opponent is done. The cards they kept are melded again to get their final
+    -- deadwood and the round is scored. Only accepted from the opponent during the "layoff" phase.
+    function self:finish_layoff(player)
+        local pending = self.pending_knock
+        if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then return end
 
-                local card = get_card_data(card_name)
-                if can_extend_meld(card, meld_cards_by_index[meld_index]) then
-                    table.insert(meld_cards_by_index[meld_index], card)
-                    used[card_name] = true
-                    laid_off_value = laid_off_value + card_value_from_name(card_name)
-                end
-            end
-        end
-
-        -- Laid-off cards leave the hand before the remaining deadwood is computed.
-        for card_name, _ in pairs(used) do
-            remove_card_from_hand(opponent_hand, card_name)
-        end
-
-
-        local remaining_cards = {}
-        for _, name in ipairs(opponent_hand) do
-            table.insert(remaining_cards, get_card_data(name))
-        end
-        local _, final_opponent_deadwood = best_combinations(remaining_cards)
+        local _, final_opponent_deadwood = best_combinations(self:hand_cards_data(player))
 
         self.pending_knock = nil
 
-        self:finalize_round(pending.knocker, pending.opponent, pending.knocker_deadwood, final_opponent_deadwood, false, laid_off_value)
+        self:finalize_round(pending.knocker, pending.opponent, pending.knocker_deadwood, final_opponent_deadwood,
+                            false, pending.laid_off_value, pending.laid_off_cards)
     end
 
     return self

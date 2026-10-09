@@ -1,5 +1,6 @@
 -- The opponent's hand on screen (client side): face-down cards fanned along the top edge. The cards are
--- only counted, never identified (the server does not reveal them). Global constructor-style class:
+-- only counted, never identified (the server does not reveal them) until a round ends and reveal() turns
+-- them face up, with their melds outlined. Global constructor-style class:
 -- OpponentHand(x, y), x = horizontal centre of the fan, y = top of the cards at the centre.
 -- Uses the same fan layout as PlayerHand, mirrored vertically.
 
@@ -15,6 +16,8 @@ function OpponentHand(x, y)
     self.x = x
     self.y = y
     self.cards = {}
+    -- meld_of[card] = 1-based number of the meld a revealed card belongs to (empty while face down).
+    self.meld_of = {}
 
 
     -- Moves every card towards its slot in the fan at `speed` pixels per second. dragging_card /
@@ -60,19 +63,53 @@ function OpponentHand(x, y)
     end
 
 
+    -- Turns the hand face up at the end of a round. `cards` are the real cards in display order (melds
+    -- first), `melds` lists of those same card objects. Every real card takes the place of the hidden one
+    -- it replaces, so it seems to turn over where it lies; hidden cards that are not in the list (e.g.
+    -- cards laid off onto the knocker's melds) disappear.
+    function self:reveal(cards, melds)
+        self.meld_of = {}
+        for i, meld in ipairs(melds) do
+            for _, card in ipairs(meld) do
+                self.meld_of[card] = i
+            end
+        end
+
+        for i, card in ipairs(cards) do
+            local hidden = self.cards[i]
+            if hidden ~= nil then
+                card:set_position(hidden:get_position())
+            end
+        end
+
+        self.cards = cards
+    end
+
     -- Removes all cards (new round).
     function self:reset()
         self.cards = {}
+        self.meld_of = {}
     end
 
 
-    -- Draws all cards with the noise shader and wobble. The previous shader is restored afterwards.
+    -- Draws all cards with wobble: with the noise shader, and revealed melded cards with the outline
+    -- shader in the colour of their meld. The previous shader is restored afterwards.
     function self:draw()
         local currentShader = love.graphics.getShader()
-        love.graphics.setShader(card_shader)
-        card_shader:send("time", love.timer.getTime())
+        local time = love.timer.getTime()
 
         for _, card in ipairs(self.cards) do
+            local meld_index = self.meld_of[card]
+
+            if meld_index then
+                love.graphics.setShader(highlight_card_shader)
+                highlight_card_shader:send("time", time)
+                highlight_card_shader:send("highlight_color", combination_colors[meld_index])
+            else
+                love.graphics.setShader(card_shader)
+                card_shader:send("time", time)
+            end
+
             card:draw(true)
         end
 

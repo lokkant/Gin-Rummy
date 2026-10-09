@@ -198,20 +198,6 @@ local function draw_round_result(state)
         px, score_y + 40, w, "center")
 end
 
--- Draws the banner shown to the knocker while the opponent lays off cards.
-local function draw_waiting_for_layoff(state)
-    local w, h = 380, 100
-    local px, py = love.graphics.getWidth() / 2 - w / 2, love.graphics.getHeight() / 2 - h / 2
-    local font = state.fonts.base
-
-    love.graphics.setColor(0, 0, 0, 0.7)
-    love.graphics.rectangle("fill", px, py, w, h, 10, 10)
-
-    love.graphics.setFont(font)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.printf("Waiting for opponent to lay off cards...", px, py + h / 2 - font:getHeight() / 2, w, "center")
-end
-
 -- Draws the end screen: a dark veil, YOU WIN / YOU LOSE and then, in this order of priority, why the match
 -- is really over (opponent disconnected, connection lost, opponent declined) or the rematch question.
 local function draw_game_over(state)
@@ -244,16 +230,39 @@ local function draw_game_over(state)
     end
 end
 
--- Draws a dark veil with the connection message in the middle.
+-- Draws a dark veil with the connection message in the middle. A host that is waiting for the opponent
+-- also sees what the opponent has to type to join: the addresses and a hint about the network.
 local function draw_connection(state, message)
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
+    local is_waiting_as_host = state.hosting and network.get_status() == "connected" and
+                               not state.has_started_first_game
 
     love.graphics.setColor(0, 0, 0, 0.75)
     love.graphics.rectangle("fill", 0, 0, w, h)
 
     love.graphics.setFont(state.fonts.base)
     love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.printf(message, 0, h / 2 - 40, w, "center")
+
+    if not is_waiting_as_host then
+        love.graphics.printf(message, 0, h / 2 - 40, w, "center")
+        return
+    end
+
+    love.graphics.printf(message, 0, h / 2 - 190, w, "center")
+    love.graphics.printf("The other player joins with this address:", 0, h / 2 - 130, w, "center")
+
+    love.graphics.setFont(state.fonts.number)
+    love.graphics.setColor(1, 0.85, 0.1, 1)
+    for i, address in ipairs(state.host_addresses) do
+        love.graphics.printf(address, 0, h / 2 - 85 + (i - 1) * 42, w, "center")
+    end
+
+    -- Only 127.0.0.1 works on this very computer; the first address is for the same network or a VPN.
+    love.graphics.setFont(state.fonts.round_result)
+    love.graphics.setColor(1, 1, 1, 0.85)
+    love.graphics.printf("Same network or VPN: use the first address.   Over the internet: forward the " ..
+                         "UDP port " .. tostring(state.server_address:match(":(%d+)$")) .. " on your router.",
+                         w * 0.2, h / 2 + 15, w * 0.6, "center")
 end
 
 -- Draws the pause menu: dark veil, title and the three buttons (the wobble and fullscreen labels show
@@ -282,10 +291,6 @@ end
 function overlays.draw(state)
     if state.round_result ~= nil then
         draw_round_result(state)
-    end
-
-    if state.waiting_for_layoff then
-        draw_waiting_for_layoff(state)
     end
 
     if state.game_over_info ~= nil then
