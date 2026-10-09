@@ -15,6 +15,7 @@ function Animations()
             tag = options.tag,
             blocking = options.blocking,
             on_finish = options.on_finish,
+            card = card,
             step = function(dt)
                 local target_x, target_y = get_target()
                 card:move_to(dt, speed, target_x, target_y)
@@ -97,6 +98,14 @@ function Animations()
         for _, animation in ipairs(self.list) do
             if animation.draw then
                 animation.draw()
+            end
+        end
+    end
+
+    function self:each_card(fn)
+        for _, animation in ipairs(self.list) do
+            if animation.card then
+                fn(animation.card)
             end
         end
     end

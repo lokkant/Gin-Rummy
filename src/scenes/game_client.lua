@@ -1,832 +1,160 @@
-require 'card'
-require 'deck'
-require 'player_hand'
-require 'opponent_hand'
-require 'discard_pile'
-require 'shaders'
-require 'cards_database'
 require 'animations'
 
 local love = require "love"
 local network = require "network"
+local layout = require "client/layout"
+local knock = require "client/knock"
+local hud = require "client/hud"
+local overlays = require "client/overlays"
+local input = require "client/input"
+local messages = require "client/messages"
 
 local Scene = {}
 
-local deck
-local discard_pile
-local player_hand
-local opponent_hand
-local back_card_texture
-local deck_texture
-local white_pixel
-local dragging_card
-local drag_offset_x
-local drag_offset_y
-local hovered_card
-local opponent_card_reference
-local taken_from_discard
-local animations
-
-local OPPONENT_Y_FRACTION = 100 / 1080
-local HAND_Y_FRACTION = 750 / 1080
-local OPPONENT_Y_POSITION
-local HAND_Y_POSITION
-local SPEED = 1000
-local CARD_HEIGHT
-
-local KNOCK_BUTTON_WIDTH = 140
-local KNOCK_BUTTON_HEIGHT = 50
-local knock_button_x
-local knock_button_y
-
-local LAMP_RADIUS = 16
-local MAX_HAND_CARDS = 11
-
-local is_my_turn = false
-local is_game_over = false
-local round_result
-local ROUND_RESULT_DURATION = 6
-local game_over_info
-local my_total_score = 0
-local opponent_total_score = 0
-local waiting_for_layoff = false
-
-local rematch_response_sent = false
-local opponent_left = false
-
-local LEAVE_DELAY = 3
-
-local REMATCH_BUTTON_WIDTH = 140
-local REMATCH_BUTTON_HEIGHT = 50
-
-local is_paused = false
-local PAUSE_BUTTON_WIDTH = 260
-local PAUSE_BUTTON_HEIGHT = 50
-
-local BACK_BUTTON_WIDTH = 260
-local BACK_BUTTON_HEIGHT = 50
-local server_address = ""
-
-local pending_messages = {}
-local KNOCK_PAUSE_DURATION = 2
-local has_started_first_game = false
-
-local font
-local number_font
-local gin_font
-local round_result_font
-
-local function update_hand_positions(h)
-    OPPONENT_Y_POSITION = h * OPPONENT_Y_FRACTION
-    HAND_Y_POSITION = h * HAND_Y_FRACTION
-end
-
-function Scene.load(ip)
-    server_address = ip
-    network.connect(ip)
-
-    pending_messages = {}
-    animations = Animations()
-    has_started_first_game = false
-
-    dragging_card = nil
-    hovered_card = nil
-    taken_from_discard = nil
-    is_my_turn = false
-    is_game_over = false
-    is_paused = false
-    round_result = nil
-    game_over_info = nil
-    my_total_score = 0
-    opponent_total_score = 0
-    waiting_for_layoff = false
-    rematch_response_sent = false
-    opponent_left = false
-
-    font = love.graphics.newFont("ArchivoBlack-Regular.ttf")
-    number_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 28)
-    gin_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 48)
-    round_result_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 20)
-
-	back_card_texture = love.graphics.newImage("assets/back_flipped.png")
-    local card_slot_texture = love.graphics.newImage("assets/card_slot.png")
-    deck_texture = love.graphics.newImage("assets/deck.png")
-
-    back_card_texture:setFilter("linear", "linear")
-    card_slot_texture:setFilter("nearest", "nearest")
-    deck_texture:setFilter("nearest", "nearest")
-
-    local pixel_data = love.image.newImageData(1, 1)
-    pixel_data:setPixel(0, 0, 1, 1, 1, 1)
-    white_pixel = love.graphics.newImage(pixel_data)
-
-    update_hand_positions(love.graphics.getHeight())
-
-    deck = Deck(100, 0, deck_texture, scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-    discard_pile = DiscardPile(0, 0, card_slot_texture, scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-    player_hand = PlayerHand(love.graphics.getWidth() / 2, HAND_Y_POSITION)
-    opponent_hand = OpponentHand(love.graphics.getWidth() / 2, OPPONENT_Y_POSITION)
-    opponent_card_reference = Card("A", "heart", 0, 0, back_card_texture, scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-
-    -- set discard pile in the center
-    discard_pile.x = love.graphics.getWidth() / 2 - discard_pile:get_width() / 2
-    discard_pile.y = love.graphics.getHeight() / 2 - discard_pile:get_height() / 2
-
-    deck.y = love.graphics.getHeight() / 2 - deck_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR / 2
-
-    CARD_HEIGHT = back_card_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR
-
-    knock_button_x = love.graphics.getWidth() - KNOCK_BUTTON_WIDTH - 30
-    knock_button_y = HAND_Y_POSITION + CARD_HEIGHT / 2 - KNOCK_BUTTON_HEIGHT / 2
-end
-
-function Scene.resize(w, h)
-    if deck == nil then return end
-
-    update_hand_positions(h)
-
-    deck.scaleX = scale / ASSET_RESOLUTION_FACTOR
-    deck.scaleY = scale / ASSET_RESOLUTION_FACTOR
-    discard_pile.scaleX = scale / ASSET_RESOLUTION_FACTOR
-    discard_pile.scaleY = scale / ASSET_RESOLUTION_FACTOR
-    opponent_card_reference:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-
-    player_hand.x = w / 2
-    player_hand.y = HAND_Y_POSITION
-    opponent_hand.x = w / 2
-    opponent_hand.y = OPPONENT_Y_POSITION
-
-    discard_pile.x = w / 2 - discard_pile:get_width() / 2
-    discard_pile.y = h / 2 - discard_pile:get_height() / 2
-    deck.y = h / 2 - deck_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR / 2
-
-    CARD_HEIGHT = back_card_texture:getHeight() * scale / ASSET_RESOLUTION_FACTOR
-    knock_button_x = w - KNOCK_BUTTON_WIDTH - 30
-    knock_button_y = HAND_Y_POSITION + CARD_HEIGHT / 2 - KNOCK_BUTTON_HEIGHT / 2
-
-    for _, card in ipairs(player_hand.cards) do
-        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-    end
-
-    for _, card in ipairs(opponent_hand.cards) do
-        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-    end
-
-    if discard_pile.highest_card ~= nil then
-        discard_pile.highest_card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-    end
-
-    if discard_pile.second_highest_card ~= nil then
-        discard_pile.second_highest_card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-    end
-end
-
-local function copy(original)
-    local copy_t = {}
-    for key, value in pairs(original) do
-        copy_t[key] = value
-    end
-    return copy_t
-end
-
-local function get_lamp_x()
-    local card_width = back_card_texture:getWidth() * scale / ASSET_RESOLUTION_FACTOR
-    local max_hand_half_width = (card_width / 1.5) * MAX_HAND_CARDS / 2 + card_width / 2
-    return love.graphics.getWidth() / 2 - max_hand_half_width - LAMP_RADIUS * scale - 30 * scale
-end
-
-local LAMP_GLOW_SCALE = 2
-
-local function draw_turn_lamp(cx, cy, is_on)
-    local radius = LAMP_RADIUS * scale
-    local half = radius * LAMP_GLOW_SCALE
-
-    love.graphics.setShader(lamp_shader)
-    lamp_shader:send("time", love.timer.getTime())
-    lamp_shader:send("is_on", is_on and 1 or 0)
-    lamp_shader:send("lamp_color", {1, 0.75, 0.15})
-
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(white_pixel, cx - half, cy - half, 0, half * 2, half * 2)
-
-    love.graphics.setShader()
-end
+local state
 
 local function leave_to_menu()
     network.close()
     SceneManager.switch("menu")
 end
 
-local function get_discard_pile_position()
-    return discard_pile:get_position()
-end
-
-local function fly_to_discard_pile(flying_card, options)
-    animations:move_card(flying_card, get_discard_pile_position, SPEED, options)
-end
-
-local function handle_knock_discard(message)
-    local flying_card
-
-    if message.mine then
-        flying_card = copy(opponent_card_reference)
-
-        local rank, suit = string.match(message.card, "^([%w]+)_([%a]+)$")
-        for _, card in ipairs(player_hand.cards) do
-            if card.rank == rank and card.suit == suit then
-                local cx, cy = card:get_position()
-                flying_card:set_position(cx, cy)
-                break
-            end
-        end
-        player_hand:remove_card(rank, suit)
-    else
-        flying_card = opponent_hand:remove_random_card() or copy(opponent_card_reference)
-    end
-
-    fly_to_discard_pile(flying_card, {
-        blocking = true,
-        on_finish = function()
-            discard_pile:add_card(flying_card)
-            animations:delay(KNOCK_PAUSE_DURATION, {blocking = true})
-        end
-    })
-end
-
-local function handle_message(message)
-    if message.type == "is_my_turn" then
-        taken_from_discard = nil
-        is_my_turn = message.answer
-    elseif message.type == "update_discard_pile" then
-        local card = get_card(message.card)
-        discard_pile:add_card(card)
-    elseif message.type == "opponent_get_card_from_deck" then
-        local opponent_card_reference_copy = copy(opponent_card_reference)
-        opponent_card_reference_copy.wobble_seed = love.math.random() * 2 * math.pi
-        opponent_card_reference_copy:set_position(deck:get_position())
-        opponent_hand:add_card(opponent_card_reference_copy)
-    elseif message.type == "opponent_place_card_to_discard_pile" then
-        local flying_card = opponent_hand:remove_random_card() or copy(opponent_card_reference)
-        local placed_card = get_card(message.card)
-
-        fly_to_discard_pile(flying_card, {
-            tag = "discard_pile",
-            on_finish = function()
-                discard_pile:add_card(placed_card)
-            end
-        })
-    elseif message.type == "opponent_get_card_from_discard_pile" then
-        discard_pile:remove_top_card()
-        local opponent_card_reference_copy = copy(opponent_card_reference)
-        opponent_card_reference_copy.wobble_seed = love.math.random() * 2 * math.pi
-        opponent_card_reference_copy:set_position(discard_pile:get_position())
-        opponent_hand:add_card(opponent_card_reference_copy)
-    elseif message.type == "get_card_from_deck" then
-        local card = get_card(message.card)
-        card:set_position(deck:get_position())
-        card:set_scale(scale / ASSET_RESOLUTION_FACTOR, scale / ASSET_RESOLUTION_FACTOR)
-        player_hand:add_card(card)
-    elseif message.type == "knock_discard" then
-        handle_knock_discard(message)
-    elseif message.type == "new_round" then
-        dragging_card = nil
-        taken_from_discard = nil
-        player_hand:reset()
-        opponent_hand:reset()
-        discard_pile:reset()
-        is_my_turn = false
-        animations:cancel("round_result")
-        round_result = nil
-        waiting_for_layoff = false
-    elseif message.type == "waiting_for_layoff" then
-        waiting_for_layoff = true
-        is_my_turn = false
-    elseif message.type == "layoff_phase" then
-        SceneManager.switch("layoff", message.combinations, player_hand.cards)
-    elseif message.type == "round_result" then
-        round_result = message
-        animations:cancel("round_result")
-        animations:delay(ROUND_RESULT_DURATION, {
-            tag = "round_result",
-            blocking = true,
-            on_finish = function()
-                round_result = nil
-            end
-        })
-        my_total_score = message.your_total_score
-        opponent_total_score = message.opponent_total_score
-        is_my_turn = false
-        waiting_for_layoff = false
-    elseif message.type == "game_over" then
-        game_over_info = message
-        is_game_over = true
-        is_paused = false
-        is_my_turn = false
-        rematch_response_sent = false
-        opponent_left = false
-        if message.opponent_disconnected then
-            animations:delay(LEAVE_DELAY, {tag = "leave", on_finish = leave_to_menu})
-        end
-    elseif message.type == "opponent_declined_rematch" then
-        opponent_left = true
-        animations:delay(LEAVE_DELAY, {tag = "leave", on_finish = leave_to_menu})
-    elseif message.type == "new_game" then
-        dragging_card = nil
-        taken_from_discard = nil
-        is_paused = false
-        player_hand:reset()
-        opponent_hand:reset()
-        discard_pile:reset()
-        is_my_turn = false
-        is_game_over = false
-        game_over_info = nil
-        animations:cancel("round_result")
-        animations:cancel("leave")
-        round_result = nil
-        waiting_for_layoff = false
-        my_total_score = 0
-        opponent_total_score = 0
-        rematch_response_sent = false
-        opponent_left = false
-    end
-end
-
-
-local function is_discard_pile_updating()
-    return animations:is_active("discard_pile")
-end
-
-local function process_next_queued_message()
-    if animations:is_busy() or #pending_messages == 0 then return end
-
-    local message = table.remove(pending_messages, 1)
-
-    if message.type == "new_game" and not has_started_first_game then
-        has_started_first_game = true
-        handle_message(message)
-    elseif message.type == "new_round" or message.type == "new_game" then
-        animations:wait_for(function(done)
-            SceneManager.flash(function()
-                handle_message(message)
-                done()
-            end)
-        end, {blocking = true})
-    else
-        handle_message(message)
-    end
-end
-
-local function evaluate_knock()
-    if #player_hand.cards ~= 11 then
-        return nil, player_hand.score
-    end
-
-    local discard_card, resulting_deadwood = player_hand:get_knock_discard(taken_from_discard)
-    if discard_card == nil then
-        return nil, player_hand.score
-    end
-
-    if resulting_deadwood > 10 then
-        return nil, resulting_deadwood
-    end
-
-    return discard_card, resulting_deadwood
-end
-
-local function is_knock_available()
-    if not is_my_turn or is_game_over then return false end
-    local discard_card = evaluate_knock()
-    return discard_card ~= nil
-end
-
-local function is_point_in_knock_button(x, y)
-    return x >= knock_button_x and x <= knock_button_x + KNOCK_BUTTON_WIDTH and
-           y >= knock_button_y and y <= knock_button_y + KNOCK_BUTTON_HEIGHT
-end
-
--- discard_card is thrown away by the knock, so it can't stay in a meld
-local function build_combinations_message(discard_card)
-    local combos = {}
-    for _, meld in ipairs(player_hand:get_current_combination()) do
-        local meld_names = {}
-        for _, card in ipairs(meld) do
-            if card ~= discard_card then
-                table.insert(meld_names, card.rank .. "_" .. card.suit)
-            end
-        end
-        table.insert(combos, meld_names)
-    end
-    return combos
-end
-
-local function get_rematch_buttons()
-    local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-    local button_y = h / 2 + 10
-    local spacing = 30
-    local total_width = REMATCH_BUTTON_WIDTH * 2 + spacing
-    local start_x = w / 2 - total_width / 2
-
+local function new_state(address)
     return {
-        yes = {x = start_x, y = button_y, w = REMATCH_BUTTON_WIDTH, h = REMATCH_BUTTON_HEIGHT},
-        no = {x = start_x + REMATCH_BUTTON_WIDTH + spacing, y = button_y, w = REMATCH_BUTTON_WIDTH, h = REMATCH_BUTTON_HEIGHT}
+        server_address = address,
+        leave_to_menu = leave_to_menu,
+        animations = Animations(),
+
+        pending_messages = {},
+        has_started_first_game = false,
+
+        is_my_turn = false,
+        is_game_over = false,
+        is_paused = false,
+        round_result = nil,
+        game_over_info = nil,
+        my_total_score = 0,
+        opponent_total_score = 0,
+        waiting_for_layoff = false,
+        rematch_response_sent = false,
+        opponent_left = false,
+
+        dragging_card = nil,
+        drag_offset_x = 0,
+        drag_offset_y = 0,
+        hovered_card = nil,
+        taken_from_discard = nil,
+        draw_requested = false
     }
 end
 
-local function is_point_in_rect(x, y, rect)
-    return x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h
+function Scene.load(ip)
+    network.connect(ip)
+
+    state = new_state(ip)
+
+    hud.load(state)
+    layout.create(state)
 end
 
-local function is_rematch_resolved()
-    return rematch_response_sent or opponent_left or network.get_status() == "disconnected" or
-           (game_over_info ~= nil and game_over_info.opponent_disconnected)
+function Scene.resize(w, h)
+    if state == nil or state.deck == nil then return end
+
+    layout.apply(state, w, h)
 end
 
-local function get_pause_buttons()
-    local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-    local spacing = 20
-    local row = PAUSE_BUTTON_HEIGHT + spacing
-    local start_y = h / 2 - 10 - row
-
-    return {
-        fullscreen = {x = w / 2 - PAUSE_BUTTON_WIDTH / 2, y = start_y, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT},
-        wobble = {x = w / 2 - PAUSE_BUTTON_WIDTH / 2, y = start_y + row, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT},
-        quit = {x = w / 2 - PAUSE_BUTTON_WIDTH / 2, y = start_y + row * 2, w = PAUSE_BUTTON_WIDTH, h = PAUSE_BUTTON_HEIGHT}
-    }
-end
-
-local function get_connection_message()
-    local status = network.get_status()
-
-    if status == "failed" then
-        return "Could not connect to " .. server_address
-    elseif status == "disconnected" and game_over_info == nil then
-        return "Connection to the server was lost"
-    elseif status == "connecting" then
-        return "Connecting to " .. server_address .. "..."
-    elseif status == "connected" and not has_started_first_game then
-        return "Waiting for another player..."
+local overlay_actions = {
+    leave = leave_to_menu,
+    rematch_no = leave_to_menu,
+    rematch_yes = function()
+        state.rematch_response_sent = true
+        network.send({type = "rematch_response", answer = true})
+    end,
+    toggle_fullscreen = function()
+        love.window.setFullscreen(not love.window.getFullscreen())
+    end,
+    toggle_wobble = function()
+        WOBBLE_ENABLED = not WOBBLE_ENABLED
+    end,
+    quit = function()
+        love.event.quit()
     end
-
-    return nil
-end
-
-local function is_back_button_visible()
-    if get_connection_message() ~= nil then return true end
-    return is_game_over and network.get_status() == "disconnected"
-end
-
-local function get_back_button()
-    local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-    return {x = w / 2 - BACK_BUTTON_WIDTH / 2, y = h / 2 + 120, w = BACK_BUTTON_WIDTH, h = BACK_BUTTON_HEIGHT}
-end
+}
 
 function Scene.mousepressed(x, y, button)
-    if is_back_button_visible() and not is_paused then
-        if button == 1 and is_point_in_rect(x, y, get_back_button()) then
-            leave_to_menu()
+    local consumed, action = overlays.handle_click(state, x, y, button)
+
+    if consumed then
+        if action then
+            overlay_actions[action]()
         end
         return
     end
 
-    if is_paused then
-        if button ~= 1 then return end
-
-        local buttons = get_pause_buttons()
-
-        if is_point_in_rect(x, y, buttons.fullscreen) then
-            love.window.setFullscreen(not love.window.getFullscreen())
-        elseif is_point_in_rect(x, y, buttons.wobble) then
-            WOBBLE_ENABLED = not WOBBLE_ENABLED
-        elseif is_point_in_rect(x, y, buttons.quit) then
-            love.event.quit()
-        end
-
-        return
-    end
-
-    if is_game_over then
-        if button ~= 1 or is_rematch_resolved() then return end
-
-        local buttons = get_rematch_buttons()
-
-        if is_point_in_rect(x, y, buttons.yes) then
-            rematch_response_sent = true
-            network.send({type = "rematch_response", answer = true})
-        elseif is_point_in_rect(x, y, buttons.no) then
-            rematch_response_sent = true
-            leave_to_menu()
-        end
-
-        return
-    end
-
-    if button == 2 then player_hand:increase_index_of_combination() end
-    if button ~= 1 then return end
-
-    if is_point_in_knock_button(x, y) then
-        local discard_card = evaluate_knock()
-        if is_my_turn and not is_game_over and discard_card ~= nil then
-            network.send({
-                type = "knock",
-                discard = discard_card.rank .. "_" .. discard_card.suit,
-                combinations = build_combinations_message(discard_card)
-            })
-            is_my_turn = false
-        end
-        return
-    end
-
-    -- take card from deck
-    if deck:mousepressed(x, y, button) and is_my_turn and #player_hand.cards == 10 then
-        network.send({type = "get_card_from_deck"})
-    -- take card from discard pile
-    elseif discard_pile:mousepressed(x, y, button) then
-        if is_my_turn and #player_hand.cards == 10 and not is_discard_pile_updating() then
-            local card = discard_pile:remove_top_card()
-            if card ~= nil then
-                taken_from_discard = card
-                player_hand:add_card(card)
-                network.send({type = "get_card_from_discard_pile"})
-            end
-        end
-    -- dragging card
-    elseif dragging_card == nil then
-        for i = #player_hand.cards, 1, -1 do
-            local card = player_hand.cards[i]
-            if card:mousepressed(x, y, button) then
-                dragging_card = card
-                local card_x, card_y = card:get_position()
-                drag_offset_x = x - card_x
-                drag_offset_y = y - card_y
-                break
-            end
-        end
-    end
+    input.mousepressed(state, x, y, button)
 end
-
 
 function Scene.mousereleased(x, y, button)
-    -- move card to discard pile
-    if dragging_card ~= nil and dragging_card ~= taken_from_discard and
-       discard_pile:mousepressed(x, y, button) and is_my_turn and #player_hand.cards == 11 then
-        network.send({type = "put_card_to_discard_pile", card = dragging_card.rank .. "_" .. dragging_card.suit})
+    if state.is_paused then return end
 
-        discard_pile:add_card(dragging_card)
-        player_hand:remove_card(dragging_card.rank, dragging_card.suit)
-
-        is_my_turn = false
-    end
-
-    if button == 1 then dragging_card = nil end
-end
-
-function Scene.keypressed(key)
-    if key == "escape" and not is_game_over then
-        is_paused = not is_paused
-    end
+    input.mousereleased(state, x, y, button)
 end
 
 function Scene.mousemoved(x, y, dx, dy)
-    if dragging_card then
-        dragging_card:set_position(x - drag_offset_x, y - drag_offset_y)
-    end
+    if state.is_paused then return end
+
+    input.mousemoved(state, x, y)
 end
 
+function Scene.keypressed(key)
+    if key == "escape" and not state.is_game_over then
+        state.is_paused = not state.is_paused
+
+        if state.is_paused then
+            state.dragging_card = nil
+        end
+    end
+end
 
 function Scene.update(dt)
     local mx, my = love.mouse.getPosition()
 
-    player_hand:update(dt, SPEED, dragging_card, hovered_card)
-    opponent_hand:update(dt, SPEED, dragging_card, hovered_card)
-    deck:update(mx, my)
-    discard_pile:update(mx, my)
-
-    animations:update(dt)
-
-    process_next_queued_message()
-
-    if dragging_card then
-        hovered_card = nil
-    else
-        hovered_card = player_hand:get_card_at(mx, my, hovered_card)
+    -- under an overlay the cursor is "nowhere", so the cards, deck and pile lose their hover
+    if overlays.covers_table(state) then
+        mx, my = -1, -1
     end
 
-    -- get messages from the server
-    network.poll()
+    state.player_hand:update(dt, layout.CARD_SPEED, state.dragging_card, state.hovered_card)
+    state.opponent_hand:update(dt, layout.CARD_SPEED, state.dragging_card, state.hovered_card)
+    state.deck:update(mx, my)
+    state.discard_pile:update(mx, my)
 
-    local message = network.pop()
-    while message do
-        table.insert(pending_messages, message)
-        message = network.pop()
-    end
+    state.animations:update(dt)
+
+    messages.process_next(state)
+
+    input.update_hover(state, mx, my)
+
+    messages.receive(state)
 end
-
 
 function Scene.draw()
-    -- poker table color
-    love.graphics.setColor(love.math.colorFromBytes(53, 101, 77, 255))
+    hud.draw_background()
 
-    love.graphics.rectangle(
-        "fill",
-        0,
-        0,
-        love.graphics.getWidth(),
-        love.graphics.getHeight()
-    )
+    state.deck:draw()
+    state.discard_pile:draw()
 
-    love.graphics.setShader()
-    love.graphics.setColor(1, 1, 1, 1)
+    hud.draw_lamps(state)
 
-    deck:draw()
+    state.player_hand:draw(state.dragging_card, state.hovered_card)
+    state.animations:draw()
+    state.opponent_hand:draw()
 
-    discard_pile:draw()
+    hud.draw_knock_button(state)
+    hud.draw_scores(state)
 
-    local lamp_x = get_lamp_x()
-    draw_turn_lamp(lamp_x, OPPONENT_Y_POSITION + CARD_HEIGHT / 2, not is_my_turn and not is_game_over)
-    draw_turn_lamp(lamp_x, HAND_Y_POSITION + CARD_HEIGHT / 2, is_my_turn)
-
-    player_hand:draw(dragging_card, hovered_card)
-
-    animations:draw()
-
-    opponent_hand:draw()
-
-    local knock_available = is_knock_available()
-    if knock_available then
-        love.graphics.setColor(0.8, 0.2, 0.2, 1)
-    else
-        love.graphics.setColor(0.4, 0.4, 0.4, 0.6)
-    end
-
-    love.graphics.setFont(font)
-
-    love.graphics.rectangle("fill", knock_button_x, knock_button_y, KNOCK_BUTTON_WIDTH, KNOCK_BUTTON_HEIGHT, 8, 8)
-
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.printf("KNOCK", knock_button_x, knock_button_y + KNOCK_BUTTON_HEIGHT / 2 - 8, KNOCK_BUTTON_WIDTH, "center")
-
-    local _, display_deadwood = evaluate_knock()
-    love.graphics.printf("Deadwood: " .. tostring(display_deadwood), knock_button_x, knock_button_y - 24, KNOCK_BUTTON_WIDTH, "center")
-
-    love.graphics.setColor(1, 1, 1, 1)
-
-    love.graphics.setFont(number_font)
-
-    love.graphics.printf(opponent_total_score, 0, OPPONENT_Y_POSITION - 30 * scale, love.graphics.getWidth(), "center")
-    love.graphics.printf(my_total_score, 0, HAND_Y_POSITION + CARD_HEIGHT + 15 * scale, love.graphics.getWidth(), "center")
-
-    if round_result ~= nil then
-        local w, h = 520, 240
-        local px, py = love.graphics.getWidth() / 2 - w / 2, love.graphics.getHeight() / 2 - h / 2
-
-        if round_result.is_gin then
-            love.graphics.setFont(gin_font)
-            love.graphics.setColor(1, 0.85, 0.1, 1)
-            love.graphics.printf(
-                round_result.you_knocked and "YOU GOT GIN!" or "OPPONENT GOT GIN!",
-                0, py - 70, love.graphics.getWidth(), "center")
-        end
-
-        love.graphics.setColor(0, 0, 0, 0.7)
-        love.graphics.rectangle("fill", px, py, w, h, 10, 10)
-
-        love.graphics.setFont(round_result_font)
-        love.graphics.setColor(1, 1, 1, 1)
-
-        local title
-        if round_result.is_draw then
-            title = "The deck ran out - draw!"
-        elseif round_result.is_gin then
-            title = round_result.you_knocked and "You scored big!" or "Better luck next time"
-        elseif round_result.is_undercut then
-            title = round_result.you_knocked and "Undercut! Opponent scored" or "You undercut the knocker!"
-        else
-            title = round_result.you_knocked and "You knocked!" or "Opponent knocked!"
-        end
-
-        love.graphics.printf(title, px, py + 20, w, "center")
-        love.graphics.printf(
-            "Your deadwood: " .. round_result.your_deadwood .. "   Opponent deadwood: " .. round_result.opponent_deadwood,
-            px, py + 70, w, "center")
-
-        local score_y = py + 115
-        if round_result.laid_off_value ~= nil and round_result.laid_off_value > 0 then
-            local who = round_result.you_knocked and "Opponent" or "You"
-            love.graphics.printf(who .. " laid off " .. round_result.laid_off_value .. " points", px, score_y, w, "center")
-            score_y = score_y + 35
-        end
-
-        love.graphics.printf(
-            "Round score  You: +" .. round_result.your_round_score .. "   Opponent: +" .. round_result.opponent_round_score,
-            px, score_y, w, "center")
-        love.graphics.printf(
-            "Total  You: " .. round_result.your_total_score .. "   Opponent: " .. round_result.opponent_total_score,
-            px, score_y + 40, w, "center")
-    end
-
-    if waiting_for_layoff then
-        local w, h = 380, 100
-        local px, py = love.graphics.getWidth() / 2 - w / 2, love.graphics.getHeight() / 2 - h / 2
-
-        love.graphics.setColor(0, 0, 0, 0.7)
-        love.graphics.rectangle("fill", px, py, w, h, 10, 10)
-
-        love.graphics.setFont(font)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf("Waiting for opponent to lay off cards...", px, py + h / 2 - font:getHeight() / 2, w, "center")
-    end
-
-    if game_over_info ~= nil then
-        local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-
-        love.graphics.setColor(0, 0, 0, 0.75)
-        love.graphics.rectangle("fill", 0, 0, w, h)
-
-        love.graphics.setColor(1, 1, 1, 1)
-        local text = game_over_info.you_won and "YOU WIN!" or "YOU LOSE"
-        love.graphics.printf(text, 0, h / 2 - 100, w, "center")
-
-        if game_over_info.opponent_disconnected then
-            love.graphics.printf("Opponent disconnected.", 0, h / 2 - 40, w, "center")
-            love.graphics.printf("Returning to menu...", 0, h / 2 - 10, w, "center")
-        elseif network.get_status() == "disconnected" then
-            love.graphics.printf("Disconnected from server.", 0, h / 2 - 40, w, "center")
-        elseif opponent_left then
-            love.graphics.printf("Opponent left the game.", 0, h / 2 - 40, w, "center")
-            love.graphics.printf("Returning to menu...", 0, h / 2 - 10, w, "center")
-        elseif rematch_response_sent then
-            love.graphics.printf("Waiting for opponent's response...", 0, h / 2 - 40, w, "center")
-        else
-            love.graphics.printf("Play again?", 0, h / 2 - 40, w, "center")
-
-            local buttons = get_rematch_buttons()
-
-            love.graphics.setColor(0.3, 0.6, 0.3, 1)
-            love.graphics.rectangle("fill", buttons.yes.x, buttons.yes.y, buttons.yes.w, buttons.yes.h, 8, 8)
-
-            love.graphics.setColor(0.6, 0.3, 0.3, 1)
-            love.graphics.rectangle("fill", buttons.no.x, buttons.no.y, buttons.no.w, buttons.no.h, 8, 8)
-
-            love.graphics.setColor(1, 1, 1, 1)
-            love.graphics.printf("YES", buttons.yes.x, buttons.yes.y + buttons.yes.h / 2 - 8, buttons.yes.w, "center")
-            love.graphics.printf("NO", buttons.no.x, buttons.no.y + buttons.no.h / 2 - 8, buttons.no.w, "center")
-        end
-    end
-
-    local connection_message = get_connection_message()
-    if connection_message ~= nil then
-        local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-
-        love.graphics.setColor(0, 0, 0, 0.75)
-        love.graphics.rectangle("fill", 0, 0, w, h)
-
-        love.graphics.setFont(font)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf(connection_message, 0, h / 2 - 40, w, "center")
-    end
-
-    if is_back_button_visible() and not is_paused then
-        local button = get_back_button()
-
-        love.graphics.setFont(font)
-        love.graphics.setColor(0.6, 0.2, 0.2, 1)
-        love.graphics.rectangle("fill", button.x, button.y, button.w, button.h, 8, 8)
-
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf("BACK TO MENU", button.x, button.y + button.h / 2 - 8, button.w, "center")
-    end
-
-    if is_paused then
-        local w, h = love.graphics.getWidth(), love.graphics.getHeight()
-
-        love.graphics.setColor(0, 0, 0, 0.75)
-        love.graphics.rectangle("fill", 0, 0, w, h)
-
-        love.graphics.setFont(font)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf("PAUSED", 0, h / 2 - 200, w, "center")
-
-        local buttons = get_pause_buttons()
-
-        love.graphics.setColor(0.3, 0.3, 0.3, 1)
-        love.graphics.rectangle("fill", buttons.fullscreen.x, buttons.fullscreen.y, buttons.fullscreen.w, buttons.fullscreen.h, 8, 8)
-        love.graphics.rectangle("fill", buttons.wobble.x, buttons.wobble.y, buttons.wobble.w, buttons.wobble.h, 8, 8)
-
-        love.graphics.setColor(0.6, 0.2, 0.2, 1)
-        love.graphics.rectangle("fill", buttons.quit.x, buttons.quit.y, buttons.quit.w, buttons.quit.h, 8, 8)
-
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf("Fullscreen: " .. (love.window.getFullscreen() and "ON" or "OFF"),
-            buttons.fullscreen.x, buttons.fullscreen.y + buttons.fullscreen.h / 2 - 8, buttons.fullscreen.w, "center")
-        love.graphics.printf("Card wobble: " .. (WOBBLE_ENABLED and "ON" or "OFF"),
-            buttons.wobble.x, buttons.wobble.y + buttons.wobble.h / 2 - 8, buttons.wobble.w, "center")
-        love.graphics.printf("QUIT GAME", buttons.quit.x, buttons.quit.y + buttons.quit.h / 2 - 8, buttons.quit.w, "center")
-
-        love.graphics.printf("Press ESC to resume", 0, buttons.quit.y + buttons.quit.h + 25, w, "center")
-    end
+    overlays.draw(state)
 
     love.graphics.setColor(1, 1, 1, 1)
 end
-
 
 return Scene

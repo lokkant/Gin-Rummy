@@ -1,5 +1,6 @@
 local love = require "love"
 local SceneManager = require "main"
+local ui = require "ui"
 
 local Scene = {}
 
@@ -26,10 +27,6 @@ local function get_quit_button()
         w = QUIT_BUTTON_WIDTH,
         h = QUIT_BUTTON_HEIGHT
     }
-end
-
-local function is_point_in_rect(x, y, rect)
-    return x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h
 end
 
 local function delete_last_word(text)
@@ -116,7 +113,7 @@ end
 function Scene.mousepressed(x, y, button)
     if button ~= 1 then return end
 
-    if is_point_in_rect(x, y, get_quit_button()) then
+    if ui.point_in_rect(x, y, get_quit_button()) then
         love.event.quit()
     end
 end
