@@ -9,27 +9,26 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
     self.texture = texture
     self.scaleX = scaleX
     self.scaleY = scaleY
-    self.hightest_card = nil
+    self.highest_card = nil
     self.second_highest_card = nil
-    self.is_hovered = false
     self.hover_scale = 1.0
 
     function self:add_card(card)
-        self.second_highest_card = self.hightest_card
-        self.hightest_card = card
+        self.second_highest_card = self.highest_card
+        self.highest_card = card
         card:set_position(self.x, self.y)
         card:set_scale(self.scaleX, self.scaleY)
     end
 
     function self:remove_top_card()
-        local removed_card = self.hightest_card
-        self.hightest_card = self.second_highest_card
+        local removed_card = self.highest_card
+        self.highest_card = self.second_highest_card
         self.second_highest_card = nil
         return removed_card
     end
 
     function self:reset()
-        self.hightest_card = nil
+        self.highest_card = nil
         self.second_highest_card = nil
     end
 
@@ -41,7 +40,7 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
         return self.texture:getWidth() * self.scaleX
     end
 
-    function self:get_heigth()
+    function self:get_height()
         return self.texture:getHeight() * self.scaleY
     end
 
@@ -51,10 +50,8 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
 
         if mx >= self.x and mx <= self.x + width and
            my >= self.y and my <= self.y + height then
-            self.is_hovered = true
             self.hover_scale = math.min(self.hover_scale + 0.05, 1.1)
         else
-            self.is_hovered = false
             self.hover_scale = math.max(self.hover_scale - 0.05, 1.0)
         end
     end
@@ -67,8 +64,8 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
         love.graphics.setShader(card_shader)
         card_shader:send("time", love.timer.getTime())
 
-        if self.hightest_card ~= nil then
-            love.graphics.draw(self.hightest_card.texture,
+        if self.highest_card ~= nil then
+            love.graphics.draw(self.highest_card.texture,
                 self.x - scale_offset,
                 self.y - scale_offset,
                 0,

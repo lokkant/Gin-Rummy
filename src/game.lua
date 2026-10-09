@@ -41,13 +41,14 @@ function Game(player1, player2, deck)
     self.player1_hand = {}
     self.player2_hand = {}
     self.discard_pile = {}
-    self.deck = deck
     self.turn = player1
     self.take_card = false
     self.is_over_move = false
     self.is_over_game = false
     self.is_new_round = true
     self.pending_knock = nil
+    self.taken_from_discard = nil
+    self.phase = "draw" -- draw -> discard -> (layoff) -> next turn / round over / over; every action checks the phase
 
     function self:current_turn()
         return self.turn
@@ -94,6 +95,8 @@ function Game(player1, player2, deck)
             end
             self.take_card = false
             self.is_over_move = false
+            self.taken_from_discard = nil
+            self.phase = "draw"
 
             local message = json.encode({type = "is_my_turn", answer = true})
             print("Send:", message)
@@ -125,6 +128,7 @@ function Game(player1, player2, deck)
                 player2:send(message3)
             end
             self.is_new_round = false
+            self.phase = "draw"
 
             local message = json.encode({type = "is_my_turn", answer = true})
             print("Send:", message)
@@ -142,7 +146,7 @@ function Game(player1, player2, deck)
     end
 
     function self:get_card_from_deck(player)
-        if not self.take_card and player == self:current_turn() then
+        if self.phase == "draw" and not self.take_card and player == self:current_turn() and #deck.cards > 0 then
             local card = deck:get_top_card()
             table.insert(self:get_hand(player), card)
 
@@ -157,15 +161,17 @@ function Game(player1, player2, deck)
                 player1:send(message2)
             end
             self.take_card = true
+            self.phase = "discard"
         end
     end
 
     function self:get_card_from_discard_pile(player)
-        if not self.take_card and player == self:current_turn() and #self.discard_pile > 0 then
+        if self.phase == "draw" and not self.take_card and player == self:current_turn() and #self.discard_pile > 0 then
             local card = table.remove(self.discard_pile)
             table.insert(self:get_hand(player), card)
+            self.taken_from_discard = card
 
-            local message = json.encode({type = "opponent_get_card_from_discrad_pile"})
+            local message = json.encode({type = "opponent_get_card_from_discard_pile"})
             print("Send:", message)
             if self.turn == player1 then
                 player2:send(message)
@@ -173,14 +179,15 @@ function Game(player1, player2, deck)
                 player1:send(message)
             end
             self.take_card = true
+            self.phase = "discard"
         end
     end
 
-    function self:put_card_to_discrad_pile(player, card_name)
-        if self.take_card and player == self:current_turn() then
+    function self:put_card_to_discard_pile(player, card_name)
+        if self.phase == "discard" and self.take_card and player == self:current_turn() then
             local hand = self:get_hand(player)
 
-            if remove_card_from_hand(hand, card_name) then
+            if card_name ~= self.taken_from_discard and remove_card_from_hand(hand, card_name) then
                 table.insert(self.discard_pile, card_name)
 
                 local message = json.encode({type = "opponent_place_card_to_discard_pile", card = card_name})
@@ -189,6 +196,12 @@ function Game(player1, player2, deck)
                     player2:send(message)
                 else
                     player1:send(message)
+                end
+
+                if #deck.cards <= 2 then
+                    -- the stock is (almost) gone: nobody knocked, the round is a draw
+                    self:finalize_draw()
+                    return
                 end
 
                 self.is_over_move = true;
@@ -205,6 +218,9 @@ function Game(player1, player2, deck)
         self.take_card = false
         self.is_over_move = false
         self.is_new_round = true
+        self.pending_knock = nil
+        self.taken_from_discard = nil
+        self.phase = "draw"
         self.turn = (self.turn == player1) and player2 or player1
 
         local message = json.encode({type = "new_round"})
@@ -213,6 +229,48 @@ function Game(player1, player2, deck)
         player2:send(message)
 
         self:start_game()
+    end
+
+    function self:finalize_draw()
+        self.phase = "round_over"
+
+        local function build_message(player)
+            local opponent_player = self:get_opponent(player)
+            local _, own_deadwood = best_combinations(self:hand_cards_data(player))
+            local _, opponent_deadwood = best_combinations(self:hand_cards_data(opponent_player))
+
+            return json.encode({
+                type = "round_result",
+                you_knocked = false,
+                is_gin = false,
+                is_undercut = false,
+                is_draw = true,
+                your_deadwood = own_deadwood,
+                opponent_deadwood = opponent_deadwood,
+                laid_off_value = 0,
+                your_round_score = 0,
+                opponent_round_score = 0,
+                your_total_score = self:get_total_score(player),
+                opponent_total_score = self:get_total_score(opponent_player)
+            })
+        end
+
+        local message1 = build_message(player1)
+        local message2 = build_message(player2)
+        print("Send:", message1)
+        print("Send:", message2)
+        player1:send(message1)
+        player2:send(message2)
+
+        self:start_new_round()
+    end
+
+    function self:hand_cards_data(player)
+        local cards = {}
+        for _, name in ipairs(self:get_hand(player)) do
+            table.insert(cards, get_card_data(name))
+        end
+        return cards
     end
 
     function self:finalize_round(knocker, opponent_player, knocker_deadwood, opponent_deadwood, is_gin, laid_off_value)
@@ -269,6 +327,7 @@ function Game(player1, player2, deck)
 
         if self:get_total_score(knocker) >= WINNING_SCORE or self:get_total_score(opponent_player) >= WINNING_SCORE then
             self.is_over_game = true
+            self.phase = "over"
 
             local winner = knocker
             if self:get_total_score(opponent_player) > self:get_total_score(knocker) then
@@ -289,10 +348,10 @@ function Game(player1, player2, deck)
     end
 
     function self:knock(player, discard_name, combinations)
-        if self.is_over_game then return end
+        if self.phase ~= "discard" or self.is_over_game then return end
         if player ~= self:current_turn() then return end
         if not self.take_card then return end
-        if type(discard_name) ~= "string" then return end
+        if type(discard_name) ~= "string" or discard_name == self.taken_from_discard then return end
         if type(combinations) ~= "table" then combinations = {} end
 
         local hand = self:get_hand(player)
@@ -353,6 +412,7 @@ function Game(player1, player2, deck)
             return
         end
 
+        self.phase = "layoff"
         self.pending_knock = {
             knocker = player,
             opponent = opponent_player,
@@ -371,7 +431,7 @@ function Game(player1, player2, deck)
 
     function self:finish_layoff(player, layoffs)
         local pending = self.pending_knock
-        if pending == nil or player ~= pending.opponent then return end
+        if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then return end
         if type(layoffs) ~= "table" then layoffs = {} end
 
         local opponent_hand = self:get_hand(player)
@@ -389,8 +449,8 @@ function Game(player1, player2, deck)
         local used = {}
 
         for _, layoff in ipairs(layoffs) do
-            local card_name = layoff.card
-            local meld_index = layoff.meld_index
+            local card_name = type(layoff) == "table" and layoff.card or nil
+            local meld_index = type(layoff) == "table" and layoff.meld_index or nil
 
             if type(card_name) == "string" and type(meld_index) == "number" and
                not used[card_name] and hand_contains(opponent_hand, card_name) and

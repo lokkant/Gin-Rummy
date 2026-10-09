@@ -8,9 +8,6 @@ function OpponentHand(x, y)
     local self = {}
     self.x = x
     self.y = y
-    self.combination1 = {}
-    self.combination2 = {}
-    self.combination3 = {}
     self.cards = {}
 
 
@@ -31,7 +28,7 @@ function OpponentHand(x, y)
         end
     end
 
-    
+
     function self:add_card(card)
         table.insert(self.cards, card)
         table.sort(self.cards, function(a, b) return a:is_lesser_than(b) end)

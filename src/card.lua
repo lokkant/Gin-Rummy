@@ -41,14 +41,6 @@ function Card(rank, suit, x, y, texture, scaleX, scaleY)
         return false
     end
 
-    function self:mousehover(x, y, dx, dy)
-        if x >= self.x and x <= self.x + self.texture:getWidth() * self.scaleX and
-           y >= self.y and y <= self.y + self.texture:getHeight() * self.scaleY then
-            return true
-        end
-        return false
-    end
-
     function self:set_scale(scaleX, scaleY)
         self.scaleX = scaleX
         self.scaleY = scaleY

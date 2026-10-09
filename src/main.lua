@@ -185,8 +185,6 @@ function love.mousepressed(x, y, button)
 end
 
 function love.mousereleased(x, y, button)
-    if transition.active then return end
-
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
     if scene and scene.mousereleased then
@@ -222,6 +220,10 @@ function love.keypressed(key)
     if scene and scene.keypressed then
         scene.keypressed(key)
     end
+end
+
+function love.quit()
+    require("network").close()
 end
 
 function love.resize(w, h)

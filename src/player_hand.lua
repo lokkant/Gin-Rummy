@@ -103,22 +103,58 @@ function PlayerHand(x, y)
     end
 
 
-    function self:get_knock_discard()
-        local deadwood = self:get_deadwood_cards()
-        if #deadwood == 0 then return nil end
+    function self:get_removable_meld_cards()
+        local removable = {}
 
-        local best_card = deadwood[1]
-        local best_value = get_card_value(best_card)
+        for _, meld in ipairs(self:get_current_combination()) do
+            if #meld >= 4 then
+                local is_set = true
+                for i = 2, #meld do
+                    if meld[i].rank ~= meld[1].rank then
+                        is_set = false
+                        break
+                    end
+                end
 
-        for i = 2, #deadwood do
-            local value = get_card_value(deadwood[i])
-            if value > best_value then
-                best_card = deadwood[i]
-                best_value = value
+                if is_set then
+                    for _, card in ipairs(meld) do
+                        table.insert(removable, card)
+                    end
+                else
+                    table.insert(removable, meld[1])
+                    table.insert(removable, meld[#meld])
+                end
             end
         end
 
-        return best_card
+        return removable
+    end
+
+
+    function self:get_knock_discard(forbidden_card)
+        local best_card, best_deadwood
+
+        for _, card in ipairs(self:get_deadwood_cards()) do
+            if card ~= forbidden_card then
+                local deadwood = self.score - get_card_value(card)
+                if best_card == nil or deadwood < best_deadwood then
+                    best_card = card
+                    best_deadwood = deadwood
+                end
+            end
+        end
+
+        if best_card ~= nil then
+            return best_card, best_deadwood
+        end
+
+        for _, card in ipairs(self:get_removable_meld_cards()) do
+            if card ~= forbidden_card then
+                return card, self.score
+            end
+        end
+
+        return nil
     end
 
 

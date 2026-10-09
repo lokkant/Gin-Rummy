@@ -149,12 +149,8 @@ end
 
 
 function best_combinations(cards)
-    local best_combinations = {{}}
-    local best_score = 0
-
-    for _, card in ipairs(cards) do
-        best_score = best_score + get_card_value(card)
-    end
+    local best_combinations = {}
+    local best_score = math.huge
 
     local melds_combinations = gen_melds_combinations(cards)
 

@@ -1,5 +1,3 @@
-require 'cards_database'
-
 local love = require "love"
 
 function Deck(x, y, texture, scaleX, scaleY)
@@ -9,7 +7,6 @@ function Deck(x, y, texture, scaleX, scaleY)
     self.texture = texture
     self.scaleX = scaleX
     self.scaleY = scaleY
-    self.is_hovered = false
     self.hover_scale = 1.0
 
     function self:update(mx, my)
@@ -18,10 +15,8 @@ function Deck(x, y, texture, scaleX, scaleY)
 
         if mx >= self.x and mx <= self.x + width and
            my >= self.y and my <= self.y + height then
-            self.is_hovered = true
             self.hover_scale = math.min(self.hover_scale + 0.05, 1.1)
         else
-            self.is_hovered = false
             self.hover_scale = math.max(self.hover_scale - 0.05, 1.0)
         end
     end

@@ -7,6 +7,8 @@ local json = require "dkjson"
 
 love.graphics = nil
 
+-- io.stdout:setvbuf("line")
+
 local host
 local player1
 local player2
@@ -92,45 +94,77 @@ local function handle_disconnect(peer)
     end
 end
 
+local function handle_message(peer, data)
+    local ok, message = pcall(json.decode, data)
+    if not ok or type(message) ~= "table" or type(message.type) ~= "string" then return end
+
+    if peer ~= player1 and peer ~= player2 then return end
+
+    if message.type == "rematch_response" then
+        handle_rematch_response(peer, message.answer == true)
+        return
+    end
+
+    if game == nil then return end
+
+    if message.type == "get_card_from_deck" then
+        game:get_card_from_deck(peer)
+    elseif message.type == "put_card_to_discard_pile" then
+        game:put_card_to_discard_pile(peer, message.card)
+    elseif message.type == "get_card_from_discard_pile" then
+        game:get_card_from_discard_pile(peer)
+    elseif message.type == "knock" then
+        game:knock(peer, message.discard, message.combinations)
+    elseif message.type == "finish_layoff" then
+        game:finish_layoff(peer, message.layoffs)
+    end
+end
+
+local function handle_event(event)
+    if event.type == "connect" then
+        print("Player connected:", event.peer)
+        if player1 == nil then
+            player1 = event.peer
+        elseif player2 == nil then
+            player2 = event.peer
+        else
+            print("Rejecting extra connection:", event.peer)
+            event.peer:disconnect()
+        end
+    elseif event.type == "receive" then
+        print("Received:", event.data, event.peer)
+        handle_message(event.peer, event.data)
+    elseif event.type == "disconnect" then
+        print("Player disconnected:", event.peer)
+        handle_disconnect(event.peer)
+    end
+
+    if player1 and player2 and game == nil then
+        start_new_match()
+    end
+end
+
 function Server.load()
     host = enet.host_create("*:6789")
+
+    if host == nil then
+        print("ERROR: can't start the server on port 6789 (is another server already running?)")
+        love.event.quit(1)
+        return
+    end
+
     print("Server started on port 6789")
 end
 
 function Server.update(dt)
+    if host == nil then return end
+
     local event = host:service(0)
 
     while event do
-        if event.type == "connect" then
-            print("Player connected:", event.peer)
-            if player1 == nil then
-                player1 = event.peer
-            elseif player2 == nil then
-                player2 = event.peer
-            end
-        elseif event.type == "receive" then
-            print("Received:", event.data, event.peer)
-            local message = json.decode(event.data)
-            if message ~= nil and message.type == "get_card_from_deck" then
-                game:get_card_from_deck(event.peer)
-            elseif message ~= nil and message.type == "put_card_to_discrad_pile" then
-                game:put_card_to_discrad_pile(event.peer, message.card)
-            elseif message ~= nil and message.type == "get_card_from_discrad_pile" then
-                game:get_card_from_discard_pile(event.peer)
-            elseif message ~= nil and message.type == "knock" then
-                game:knock(event.peer, message.discard, message.combinations)
-            elseif message ~= nil and message.type == "finish_layoff" then
-                game:finish_layoff(event.peer, message.layoffs)
-            elseif message ~= nil and message.type == "rematch_response" then
-                handle_rematch_response(event.peer, message.answer)
-            end
-        elseif event.type == "disconnect" then
-            print("Player disconnected:", event.peer)
-            handle_disconnect(event.peer)
-        end
-
-        if player1 and player2 and game == nil then
-            start_new_match()
+        local ok, err = pcall(handle_event, event)
+        if not ok then
+            print("ERROR while handling event:", err)
         end
 
         event = host:service(0)

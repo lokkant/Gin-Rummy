@@ -85,7 +85,6 @@ vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screenPos)
     );
 
     float edgeGlow = 1.0 - smoothstep(0.0, 0.03, edge);
-    float rim = 1.0 - smoothstep(0.0, 0.01, edge);
 
     float pulse = 0.85 + 0.15 * sin(time * 3.0);
 
