@@ -40,15 +40,19 @@ local card_names = get_card_names()
 -- wobble_seed, so a new one is drawn, otherwise all opponent cards would sway in sync. It also gets a
 -- random rank and suit (the real card is unknown and never shown): OpponentHand sorts its cards, so with
 -- identical values every new card would land at the same end of the fan, while random ones slide into a
--- random place between the others, like cards that are really being sorted in a hand.
-local function add_opponent_card(state, x, y)
+-- random place between the others, like cards that are really being sorted in a hand. A silent card (used
+-- when the view is repaired) makes no sound and does not count as a move of the opponent.
+local function add_opponent_card(state, x, y, silent)
     local card = copy(state.opponent_card_reference)
     card.wobble_seed = love.math.random() * 2 * math.pi
     card.rank, card.suit = string.match(card_names[love.math.random(#card_names)], "([%w]+)_([%a]+)")
     card:set_position(x, y)
     state.opponent_hand:add_card(card)
-    sounds.play_card(config.opponent_card_volume, true)
-    state.opponent_idle = 0
+
+    if not silent then
+        sounds.play_card(config.opponent_card_volume, true)
+        state.opponent_idle = 0
+    end
 end
 
 -- Flies a face-down card to the discard pile; options (tag, blocking, on_finish) go to Animations:move_card
@@ -58,6 +62,82 @@ local function fly_to_discard_pile(state, flying_card, options)
     state.animations:move_card(flying_card, function()
         return state.discard_pile:get_position()
     end, layout.CARD_SPEED, options)
+end
+
+-- Returns the name ("7_heart") of a card object.
+local function name_of(card)
+    return card.rank .. "_" .. card.suit
+end
+
+-- True when our hand holds exactly the cards of the list of names `names`.
+local function is_hand_equal(state, names)
+    local cards = state.player_hand.cards
+    if #cards ~= #names then return false end
+
+    local wanted = {}
+    for _, name in ipairs(names) do wanted[name] = true end
+
+    for _, card in ipairs(cards) do
+        if not wanted[name_of(card)] then return false end
+    end
+
+    return true
+end
+
+-- Puts our hand right: it holds exactly the cards of `names` afterwards. Cards that are in the hand already
+-- stay the same objects (so they do not jump), missing ones appear at the stock, extra ones disappear. Drops
+-- a held or lifted card, and the chosen meld arrangement starts over.
+local function repair_hand(state, names)
+    local wanted = {}
+    for _, name in ipairs(names) do wanted[name] = true end
+
+    local kept = {}
+    for _, card in ipairs(state.player_hand.cards) do
+        local name = name_of(card)
+        if wanted[name] and kept[name] == nil then kept[name] = card end
+    end
+
+    state.dragging_card = nil
+    state.hovered_card = nil
+    state.player_hand:reset()
+
+    for _, name in ipairs(names) do
+        local card = kept[name]
+
+        if card == nil then
+            card = get_card(name)
+            card:set_position(state.deck:get_position())
+            card:set_scale(layout.card_scale(), layout.card_scale())
+        end
+
+        state.player_hand:add_card(card)
+    end
+end
+
+-- Gives the opponent's hand `count` face-down cards: cards are added at the stock or removed at random.
+local function repair_opponent_hand(state, count)
+    while #state.opponent_hand.cards > count do
+        state.opponent_hand:remove_random_card()
+    end
+
+    while #state.opponent_hand.cards < count do
+        add_opponent_card(state, state.deck.x, state.deck.y, true)
+    end
+end
+
+-- Shows the discard pile of the list of names `names` (bottom first): only the top two cards are displayed.
+-- Does nothing when the top two are shown already.
+local function repair_pile(state, names)
+    local count = #names
+    local top, second = state.discard_pile.highest_card, state.discard_pile.second_highest_card
+
+    local top_ok = (count == 0 and top == nil) or (top ~= nil and name_of(top) == names[count])
+    local second_ok = (count < 2 and second == nil) or (second ~= nil and name_of(second) == names[count - 1])
+    if top_ok and second_ok then return end
+
+    state.discard_pile:reset()
+    if count >= 2 then state.discard_pile:add_card(get_card(names[count - 1])) end
+    if count >= 1 then state.discard_pile:add_card(get_card(names[count])) end
 end
 
 -- Cleans the table for the next round (or game): hands, pile and flags, and a pending result banner.
@@ -130,6 +210,15 @@ function handlers.is_my_turn(state, message)
     state.draw_requested = false
     state.is_my_turn = message.answer
 
+    -- The server says which cards we hold and how many the opponent has: if the view drifted away from it
+    -- (a move the server refused and the correction missed it), it is put right now.
+    if message.hand and not is_hand_equal(state, message.hand) then
+        repair_hand(state, message.hand)
+    end
+    if message.opponent_cards and #state.opponent_hand.cards ~= message.opponent_cards then
+        repair_opponent_hand(state, message.opponent_cards)
+    end
+
     -- This handler runs only now, after the result banner, the deal and the opponent's animations. The
     -- server starts our turn timer when it hears this, so our clock and the server's start together.
     if message.answer then
@@ -182,6 +271,29 @@ function handlers.get_card_from_deck(state, message)
 
     -- a game step: the turn timer starts again
     if state.turn_timer then state.turn_timer.elapsed = 0 end
+end
+
+-- The server refused a move we had applied at once and sends the real table: our hand, the discard pile,
+-- the size of the opponent's hand, whether it is our move and the card taken from the pile. The view is put
+-- right (without animation) and the soft "no" sound tells the player the move did not count.
+function handlers.sync(state, message)
+    repair_hand(state, message.your_hand or {})
+    repair_opponent_hand(state, message.opponent_cards or #state.opponent_hand.cards)
+    repair_pile(state, message.discard_pile or {})
+
+    state.is_my_turn = message.is_my_turn == true
+    state.draw_requested = false
+    state.taken_from_discard = nil
+
+    if message.taken_from_discard then
+        for _, card in ipairs(state.player_hand.cards) do
+            if name_of(card) == message.taken_from_discard then
+                state.taken_from_discard = card
+            end
+        end
+    end
+
+    sounds.play_failure()
 end
 
 -- The knock discard animation is handle_knock_discard above.
@@ -296,7 +408,7 @@ local function handle(state, message)
 end
 
 -- Messages that only the layoff scene understands; they stay in the network inbox until it reads them.
-local LAYOFF_ONLY = {opponent_layoff = true}
+local LAYOFF_ONLY = {opponent_layoff = true, layoff_sync = true}
 
 -- Moves everything the server sent since the last frame into the queue (nothing is handled here). The
 -- layoff scene's own messages are left alone: the one that switches to it may still be waiting in the
@@ -315,6 +427,10 @@ end
 -- what puts the server's bursts of messages in order with the animations.
 function messages.process_next(state)
     if state.animations:is_busy() or #state.pending_messages == 0 then return end
+
+    -- A correction replaces the pile, so it waits until a card that is still flying onto it has landed (it
+    -- would be added a second time).
+    if state.pending_messages[1].type == "sync" and state.animations:is_active("discard_pile") then return end
 
     local message = table.remove(state.pending_messages, 1)
 

@@ -37,12 +37,28 @@
 --   get_card_from_deck                    card             you received this card (deal or draw)
 --   opponent_get_card_from_deck           -                the opponent received a hidden card
 --   update_discard_pile                   card             both: the face-up card that starts the round
---   is_my_turn                            answer (true), limits
+--   is_my_turn                            answer (true), limits, hand, opponent_cards
 --                                                          your turn starts (draw phase); limits =
 --                                                          {fade_start, fade_full, crack, timeout}: seconds
 --                                                          without a game step after which the eye turns
 --                                                          red / is fully red / the screen cracks / the
---                                                          round is lost (see config.lua)
+--                                                          round is lost (see config.lua); hand = your
+--                                                          cards (names) and opponent_cards = how many the
+--                                                          opponent holds: the client compares them with
+--                                                          its view and repairs it if they differ
+--   sync                                  your_hand, discard_pile, opponent_cards, is_my_turn,
+--                                         [taken_from_discard]
+--                                                          sent after a request of yours was refused during
+--                                                          the draw / discard phases (the client had applied
+--                                                          it at once): the real table - your cards, the
+--                                                          whole discard pile (names, bottom first), the
+--                                                          size of the opponent's hand, whether it is your
+--                                                          move and the card you took from the pile this
+--                                                          turn; the client puts its view right
+--   layoff_sync                           role ("defender"), combinations, knocker_deadwood, defender_hand
+--                                                          sent to the defender after a refused layoff_card
+--                                                          or finish_layoff: like layoff_phase, with the
+--                                                          cards laid off so far inside the melds
 --   opponent_get_card_from_discard_pile   -                the opponent took the top discard card
 --   opponent_place_card_to_discard_pile   card             the opponent discarded this card
 --   knock_discard                         card, mine       both: the knocker's discard; mine = you knocked
@@ -72,7 +88,8 @@
 -- update_discard_pile, is_my_turn; turns repeat (draw, then discard or knock). A knock sends knock_discard,
 -- then either round_result (gin) or layoff_phase to both (the defender sends layoff_card any number of
 -- times, the knocker gets opponent_layoff for each) and, after finish_layoff, round_result. After
--- round_result: new_round and a new deal, or game_over once someone reached 100 points.
+-- round_result: new_round and a new deal, or game_over once someone reached 100 points. A refused request
+-- is answered with sync (play phases) or layoff_sync (layoff phase), at most five times a second.
 
 require 'server_deck'
 require 'game'
@@ -100,7 +117,11 @@ local function start_new_match()
     game = Game(player1, player2, ServerDeck())
     rematch_state = nil
 
-    local message = json.encode({type = "new_game", time_factor = game.time_factor, horror = config.horror_enabled})
+    local message = json.encode({
+        type = "new_game",
+        time_factor = game.time_factor,
+        horror = config.horror_enabled
+    })
     print("Send:", message)
     player1:send(message)
     player2:send(message)

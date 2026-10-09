@@ -6,6 +6,7 @@
 -- deadwood than the knocker. First to WINNING_SCORE wins. Big gin (all 11 cards melded) is treated as plain
 -- gin.
 
+local love = require "love"
 local json = require "dkjson"
 local config = require "config"
 
@@ -19,6 +20,9 @@ local GIN_BONUS = 25
 local UNDERCUT_BONUS = 25
 -- The match ends when a player's total score reaches this.
 local WINNING_SCORE = 100
+-- Shortest time, in seconds, between two corrections (sync / layoff_sync) sent to the same player, so that
+-- a client that keeps sending refused moves can't flood the connection.
+local SYNC_MIN_INTERVAL = 0.2
 
 -- Removes the first occurrence of `card_name` from the array `hand`; returns true if it was there.
 local function remove_card_from_hand(hand, card_name)
@@ -70,12 +74,14 @@ function Game(player1, player2, deck)
     --   is_new_round        a deal is pending (see start_game)
     --   pending_knock       during layoff: {knocker, opponent, knocker_deadwood, knocker_combinations,
     --                       meld_cards (the knocker's melds as card objects, grown by every layoff),
+    --                       deadwood_names (the knocker's leftover cards, for layoff_sync),
     --                       laid_off_cards (names, in order), laid_off_value (points)}
     --   taken_from_discard  the card picked up from the discard pile this turn; it can't be discarded again
     --                       (otherwise taking it would be a free pass)
     --   round_number        1 for the first round of the match, then counts up
     --   time_factor         the turn timer limits of this round are multiplied by it (see get_time_factor);
     --                       the clients get it with new_game / new_round
+    --   last_sync_time      peer -> time (love.timer.getTime) of the last correction sent to it (reject)
     --   idle_time           seconds the player to move has gone without a game step (see update)
     --   turn_acknowledged   the client confirmed it showed this turn (turn_started); idle_time only counts
     --                       from then, or after config.turn_ack_wait seconds without an answer
@@ -95,6 +101,7 @@ function Game(player1, player2, deck)
     self.pending_knock = nil
     self.taken_from_discard = nil
     self.round_number = 1
+    self.last_sync_time = {}
     self.time_factor = get_time_factor(1)
     self.idle_time = 0
     self.turn_acknowledged = false
@@ -129,6 +136,71 @@ function Game(player1, player2, deck)
             return player2
         else
             return player1
+        end
+    end
+
+    -- Tells `player` how the table really looks (message "sync"): their hand, the whole discard pile, the
+    -- size of the opponent's hand, whether it is their move and the card they took from the pile this turn.
+    -- The client puts its view right with it after it applied a move the server refused. Only meant for the
+    -- phases "draw" and "discard".
+    function self:send_sync(player)
+        local is_turn = player == self:current_turn()
+
+        local message = json.encode({
+            type = "sync",
+            your_hand = self:get_hand(player),
+            discard_pile = self.discard_pile,
+            opponent_cards = #self:get_hand(self:get_opponent(player)),
+            is_my_turn = is_turn,
+            taken_from_discard = is_turn and self.taken_from_discard or nil
+        })
+        print("Send:", message)
+        player:send(message)
+    end
+
+    -- Tells the defender how the layoff really stands (message "layoff_sync", same content as
+    -- "layoff_phase"): the knocker's melds as they are now with the laid-off cards in them, the knocker's
+    -- leftover cards and the defender's remaining hand. Only meant for the phase "layoff".
+    function self:send_layoff_sync(player)
+        local pending = self.pending_knock
+
+        local melds = {}
+        for i, meld_cards in ipairs(pending.meld_cards) do
+            melds[i] = {}
+            for _, card in ipairs(meld_cards) do
+                table.insert(melds[i], card.rank .. "_" .. card.suit)
+            end
+        end
+
+        local message = json.encode({
+            type = "layoff_sync",
+            role = "defender",
+            combinations = melds,
+            knocker_deadwood = pending.deadwood_names,
+            defender_hand = self:get_hand(player)
+        })
+        print("Send:", message)
+        player:send(message)
+    end
+
+    -- A request of `player` was refused: sends them the real state so their view returns to it. Does
+    -- nothing in other phases than the ones that have a view to repair (stock/pile play, layoff for the
+    -- defender), and sends at most one correction per SYNC_MIN_INTERVAL to the same player.
+    function self:reject(player)
+        local pending = self.pending_knock
+        local in_play = self.phase == "draw" or self.phase == "discard"
+        local in_layoff = self.phase == "layoff" and pending ~= nil and player == pending.opponent
+        if not in_play and not in_layoff then return end
+
+        local now = love.timer.getTime()
+        local last = self.last_sync_time[player]
+        if last ~= nil and now - last < SYNC_MIN_INTERVAL then return end
+        self.last_sync_time[player] = now
+
+        if in_play then
+            self:send_sync(player)
+        else
+            self:send_layoff_sync(player)
         end
     end
 
@@ -168,13 +240,16 @@ function Game(player1, player2, deck)
         }
     end
 
-    -- The "is_my_turn" JSON. It carries the turn timer limits so that the client can show the player how
-    -- long they have been taking.
+    -- The "is_my_turn" JSON for the player to move. It carries the turn timer limits so that the client can
+    -- show the player how long they have been taking, and their hand and the size of the opponent's, so
+    -- that the client can notice (and repair) a view that has drifted away from the server's.
     local function build_turn_message()
         return json.encode({
             type = "is_my_turn",
             answer = true,
-            limits = get_idle_limits()
+            limits = get_idle_limits(),
+            hand = self:get_hand(self.turn),
+            opponent_cards = #self:get_hand(self:get_opponent(self.turn))
         })
     end
 
@@ -253,78 +328,95 @@ function Game(player1, player2, deck)
     end
 
     -- Draw phase: the current player takes the top stock card. The drawer gets its name, the opponent only
-    -- a hidden-card notice. Ignored in the wrong phase/turn, after the draw was made or when the stock is
-    -- empty.
+    -- a hidden-card notice. Refused in the wrong phase/turn, after the draw was made or when the stock is
+    -- empty (the player gets a "sync", see reject).
     function self:get_card_from_deck(player)
-        if self.phase == "draw" and not self.take_card and player == self:current_turn() and #deck.cards > 0 then
-            local card = deck:get_top_card()
-            table.insert(self:get_hand(player), card)
+        local can_draw = self.phase == "draw" and not self.take_card and player == self:current_turn()
 
-            local message = json.encode({type = "get_card_from_deck", card = card})
-            local message2 = json.encode({type = "opponent_get_card_from_deck"})
-            print("Send:", message)
-            print("Send:", message2)
-            self.turn:send(message)
-            if self.turn == player1 then
-                player2:send(message2)
-            else
-                player1:send(message2)
-            end
-            self.take_card = true
-            self.idle_time = 0
-            self.phase = "discard"
+        if not can_draw or #deck.cards == 0 then
+            self:reject(player)
+            return
         end
+
+        local card = deck:get_top_card()
+        table.insert(self:get_hand(player), card)
+
+        local message = json.encode({type = "get_card_from_deck", card = card})
+        local message2 = json.encode({type = "opponent_get_card_from_deck"})
+        print("Send:", message)
+        print("Send:", message2)
+        self.turn:send(message)
+        if self.turn == player1 then
+            player2:send(message2)
+        else
+            player1:send(message2)
+        end
+        self.take_card = true
+        self.idle_time = 0
+        self.phase = "discard"
     end
 
     -- Draw phase: the current player takes the top discard card. It is public, so only the opponent is
-    -- told. The card is remembered in taken_from_discard (it can't be thrown back this turn).
+    -- told. The card is remembered in taken_from_discard (it can't be thrown back this turn). Refused like
+    -- get_card_from_deck.
     function self:get_card_from_discard_pile(player)
-        if self.phase == "draw" and not self.take_card and player == self:current_turn() and #self.discard_pile > 0 then
-            local card = table.remove(self.discard_pile)
-            table.insert(self:get_hand(player), card)
-            self.taken_from_discard = card
+        local can_draw = self.phase == "draw" and not self.take_card and player == self:current_turn()
 
-            local message = json.encode({type = "opponent_get_card_from_discard_pile"})
+        if not can_draw or #self.discard_pile == 0 then
+            self:reject(player)
+            return
+        end
+
+        local card = table.remove(self.discard_pile)
+        table.insert(self:get_hand(player), card)
+        self.taken_from_discard = card
+
+        local message = json.encode({type = "opponent_get_card_from_discard_pile"})
+        print("Send:", message)
+        if self.turn == player1 then
+            player2:send(message)
+        else
+            player1:send(message)
+        end
+        self.take_card = true
+        self.idle_time = 0
+        self.phase = "discard"
+    end
+
+    -- Discard phase: moves `card_name` from the current player's hand to the discard pile and ends the
+    -- turn. Refused (with a "sync", see reject) if the card is the one just taken from the discard pile or is
+    -- not in the hand, or in the wrong phase/turn.
+    function self:put_card_to_discard_pile(player, card_name)
+        if not (self.phase == "discard" and self.take_card and player == self:current_turn()) then
+            self:reject(player)
+            return
+        end
+
+        local hand = self:get_hand(player)
+
+        if card_name == self.taken_from_discard or not remove_card_from_hand(hand, card_name) then
+            self:reject(player)
+        else
+            table.insert(self.discard_pile, card_name)
+
+            local message = json.encode({type = "opponent_place_card_to_discard_pile", card = card_name})
             print("Send:", message)
             if self.turn == player1 then
                 player2:send(message)
             else
                 player1:send(message)
             end
-            self.take_card = true
-            self.idle_time = 0
-            self.phase = "discard"
-        end
-    end
 
-    -- Discard phase: moves `card_name` from the current player's hand to the discard pile and ends the
-    -- turn. Rejected if the card is the one just taken from the discard pile or is not in the hand.
-    function self:put_card_to_discard_pile(player, card_name)
-        if self.phase == "discard" and self.take_card and player == self:current_turn() then
-            local hand = self:get_hand(player)
-
-            if card_name ~= self.taken_from_discard and remove_card_from_hand(hand, card_name) then
-                table.insert(self.discard_pile, card_name)
-
-                local message = json.encode({type = "opponent_place_card_to_discard_pile", card = card_name})
-                print("Send:", message)
-                if self.turn == player1 then
-                    player2:send(message)
-                else
-                    player1:send(message)
-                end
-
-                -- Standard rule: when the stock is down to two cards and nobody knocked, the round is a
-                -- draw (no score).
-                if #deck.cards <= 2 then
-                    self:finalize_draw()
-                    return
-                end
-
-                -- Marks the move as finished so that next_turn() really passes the turn.
-                self.is_over_move = true
-                self:next_turn()
+            -- Standard rule: when the stock is down to two cards and nobody knocked, the round is a
+            -- draw (no score).
+            if #deck.cards <= 2 then
+                self:finalize_draw()
+                return
             end
+
+            -- Marks the move as finished so that next_turn() really passes the turn.
+            self.is_over_move = true
+            self:next_turn()
         end
     end
 
@@ -379,7 +471,11 @@ function Game(player1, player2, deck)
         self.round_number = self.round_number + 1
         self.time_factor = get_time_factor(self.round_number)
 
-        local message = json.encode({type = "new_round", time_factor = self.time_factor, horror = config.horror_enabled})
+        local message = json.encode({
+            type = "new_round",
+            time_factor = self.time_factor,
+            horror = config.horror_enabled
+        })
         print("Send:", message)
         player1:send(message)
         player2:send(message)
@@ -634,12 +730,13 @@ function Game(player1, player2, deck)
     end
 
     -- Knock request: `player` throws away `discard_name` and claims the melds in `combinations` (list of
-    -- lists of card names). Everything is checked against the real hand and an invalid request is silently
-    -- ignored. Deadwood = cards that are neither in a meld nor the discard; it must be <= 10. Deadwood 0 is
-    -- gin: no layoff, the round is scored at once. Otherwise phase "layoff": both players get
+    -- lists of card names). Everything is checked against the real hand. Returns true when the knock was
+    -- accepted, nil for an invalid request (nothing changes). Deadwood = cards that are neither in a meld
+    -- nor the discard; it must be <= 10. Deadwood 0 is gin: no layoff, the round is scored at once.
+    -- Otherwise phase "layoff": both players get
     -- "layoff_phase" (the knocker's melds and deadwood and the opponent's hand, all face up because the
     -- round is decided) and the opponent lays cards off with layoff_card.
-    function self:knock(player, discard_name, combinations)
+    function self:try_knock(player, discard_name, combinations)
         if self.phase ~= "discard" or self.is_over_game then return end
         if player ~= self:current_turn() then return end
         if not self.take_card then return end
@@ -712,7 +809,7 @@ function Game(player1, player2, deck)
             local _, opponent_deadwood = best_combinations(opponent_cards)
 
             self:finalize_round(player, opponent_player, knocker_deadwood, opponent_deadwood, true, 0)
-            return
+            return true
         end
 
         -- Working copies of the knocker's melds as card objects; every accepted layoff extends one of
@@ -745,6 +842,8 @@ function Game(player1, player2, deck)
             end
         end
 
+        self.pending_knock.deadwood_names = deadwood_names
+
         -- The layoff_phase JSON for one of the two roles; the payload is the same for both.
         local function build_layoff_message(role)
             return json.encode({
@@ -762,13 +861,21 @@ function Game(player1, player2, deck)
         print("Send:", defender_message)
         player:send(knocker_message)
         opponent_player:send(defender_message)
+        return true
+    end
+
+    -- Knock request: runs try_knock; a refused knock gets the player a "sync" (see reject).
+    function self:knock(player, discard_name, combinations)
+        if not self:try_knock(player, discard_name, combinations) then
+            self:reject(player)
+        end
     end
 
     -- Layoff phase: the knocker's opponent attaches `card_name` to the meld_index-th knocker meld (1-based
     -- position in the knock's combinations). Accepted only if the card is in their hand and extends that
     -- meld, as it is now, into a valid set/run; the knocker is told ("opponent_layoff") so their screen can
-    -- animate it. Invalid requests are ignored.
-    function self:layoff_card(player, card_name, meld_index)
+    -- animate it. Returns true when the card was laid off, nil for an invalid request (nothing changes).
+    function self:try_layoff_card(player, card_name, meld_index)
         local pending = self.pending_knock
         if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then return end
         if type(card_name) ~= "string" or type(meld_index) ~= "number" then return end
@@ -788,13 +895,24 @@ function Game(player1, player2, deck)
         local message = json.encode({type = "opponent_layoff", card = card_name, meld_index = meld_index})
         print("Send:", message)
         pending.knocker:send(message)
+        return true
+    end
+
+    -- Layoff request: runs try_layoff_card; a refused card gets the defender a "layoff_sync" (see reject).
+    function self:layoff_card(player, card_name, meld_index)
+        if not self:try_layoff_card(player, card_name, meld_index) then
+            self:reject(player)
+        end
     end
 
     -- Layoff phase: the knocker's opponent is done. The cards they kept are melded again to get their final
     -- deadwood and the round is scored. Only accepted from the opponent during the "layoff" phase.
     function self:finish_layoff(player)
         local pending = self.pending_knock
-        if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then return end
+        if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then
+            self:reject(player)
+            return
+        end
 
         local _, final_opponent_deadwood = best_combinations(self:hand_cards_data(player))
 

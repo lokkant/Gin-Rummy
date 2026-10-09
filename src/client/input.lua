@@ -39,9 +39,12 @@ function input.mousepressed(state, x, y, button)
             -- not our turn, or the card for this turn is already drawn
             sounds.play_failure()
         end
-    -- take card from discard pile (not while the opponent's card is still flying onto it)
+    -- take card from discard pile (not while the opponent's card is still flying onto it, and not while a
+    -- stock draw is pending: the server would refuse the second card, but the stock card still arrives and
+    -- the hand would end up with 12 cards)
     elseif state.discard_pile:mousepressed(x, y) then
-        if not (state.is_my_turn and #hand.cards == 10) or state.animations:is_active("discard_pile") then
+        if not (state.is_my_turn and #hand.cards == 10) or state.draw_requested or
+           state.animations:is_active("discard_pile") then
             sounds.play_failure()
         else
             -- Taken locally at once; taken_from_discard remembers it, because it may not be thrown back

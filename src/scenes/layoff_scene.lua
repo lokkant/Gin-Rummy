@@ -245,6 +245,10 @@ end
 -- Leaves the scene: the game scene continues with its own state and shows the outcome.
 local function leave()
     is_left = true
+
+    -- a correction that came too late must not rebuild the next layoff scene
+    while network.take("layoff_sync") do end
+
     SceneManager.set("game")
 end
 
@@ -390,6 +394,19 @@ function Scene.update(dt)
     while message do
         apply_opponent_layoff(message)
         message = network.take("opponent_layoff")
+    end
+
+    -- The server refused a layoff we had applied at once and sends the real melds and hands: the scene is
+    -- built again from them (the last of several corrections is the one that counts).
+    local correction = network.take("layoff_sync")
+    while correction do
+        local newer = network.take("layoff_sync")
+        if newer == nil then
+            Scene.load(correction)
+            sounds.play_failure()
+            return
+        end
+        correction = newer
     end
 
     if not network.is_connected() or network.has_message("game_over") then
