@@ -3,12 +3,9 @@ require 'cards_database'
 require 'best_melds'
 
 local love = require "love"
-local json = require "dkjson"
+local network = require "network"
 
 local Scene = {}
-
-local host
-local server
 
 local knocker_melds = {}
 local my_cards = {}
@@ -122,14 +119,11 @@ local finished = false
 
 local function finish()
     finished = true
-    server:send(json.encode({type = "finish_layoff", layoffs = laid_off}))
+    network.send({type = "finish_layoff", layoffs = laid_off})
     SceneManager.set("game")
 end
 
-function Scene.load(shared_host, shared_server, combinations, my_hand_cards)
-    host = shared_host
-    server = shared_server
-
+function Scene.load(combinations, my_hand_cards)
     font = love.graphics.newFont("ArchivoBlack-Regular.ttf")
 
     knocker_melds = {}
@@ -253,11 +247,12 @@ function Scene.update(dt)
         end
     end
 
-    if host then
-        local event = host:service(0)
-        while event do
-            event = host:service(0)
-        end
+    -- messages stay in the shared inbox for the game scene; here we only watch for the game ending
+    -- (e.g. the knocker left) so FINISH isn't sent into a game that no longer exists
+    network.poll()
+    if not network.is_connected() or network.has_message("game_over") then
+        finished = true
+        SceneManager.set("game")
     end
 end
 
