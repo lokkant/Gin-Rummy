@@ -258,7 +258,7 @@ function Game(player1, player2, deck)
                 end
 
                 -- Marks the move as finished so that next_turn() really passes the turn.
-                self.is_over_move = true;
+                self.is_over_move = true
                 self:next_turn()
             end
         end

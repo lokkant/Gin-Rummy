@@ -6,6 +6,7 @@
 require 'shaders'
 
 local love = require "love"
+local ui = require "ui"
 
 -- Creates an empty pile at (x, y); `texture` is the empty-slot image.
 function DiscardPile(x, y, texture, scaleX, scaleY)
@@ -58,24 +59,23 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
         return self.texture:getHeight() * self.scaleY
     end
 
-    -- Same hover animation as Deck:update (0.05 per frame up to 1.1, back to 1.0 when the mouse leaves).
-    function self:update(mx, my)
+    -- Same hover animation as Deck:update. dt is in seconds.
+    function self:update(dt, mx, my)
         local width = self.texture:getWidth() * self.scaleX
         local height = self.texture:getHeight() * self.scaleY
+        local is_hovered = mx >= self.x and mx <= self.x + width and
+                           my >= self.y and my <= self.y + height
 
-        if mx >= self.x and mx <= self.x + width and
-           my >= self.y and my <= self.y + height then
-            self.hover_scale = math.min(self.hover_scale + 0.05, 1.1)
-        else
-            self.hover_scale = math.max(self.hover_scale - 0.05, 1.0)
-        end
+        self.hover_scale = ui.next_hover_scale(self.hover_scale, is_hovered, dt)
     end
 
     -- Draws the top card (or the empty slot) with the noise shader, enlarged by hover_scale around its
     -- centre. The shader that was active before is restored.
     function self:draw()
         local width = self.texture:getWidth() * self.scaleX
-        local scale_offset = (self.hover_scale - 1.0) * width / 2
+        local height = self.texture:getHeight() * self.scaleY
+        local offset_x = (self.hover_scale - 1.0) * width / 2
+        local offset_y = (self.hover_scale - 1.0) * height / 2
 
         local currentShader = love.graphics.getShader()
         love.graphics.setShader(card_shader)
@@ -83,15 +83,15 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
 
         if self.highest_card ~= nil then
             love.graphics.draw(self.highest_card.texture,
-                self.x - scale_offset,
-                self.y - scale_offset,
+                self.x - offset_x,
+                self.y - offset_y,
                 0,
                 self.scaleX * self.hover_scale,
                 self.scaleY * self.hover_scale)
         else
             love.graphics.draw(self.texture,
-                self.x - scale_offset,
-                self.y - scale_offset,
+                self.x - offset_x,
+                self.y - offset_y,
                 0,
                 self.scaleX * self.hover_scale,
                 self.scaleY * self.hover_scale)
@@ -100,9 +100,8 @@ function DiscardPile(x, y, texture, scaleX, scaleY)
         love.graphics.setShader(currentShader)
     end
 
-    -- True if the click (x, y) hits the pile. `button` is unused; callers check the mouse button
-    -- themselves.
-    function self:mousepressed(x, y, button)
+    -- True if the click (x, y) hits the pile; callers check the mouse button themselves.
+    function self:mousepressed(x, y)
         if x >= self.x and x <= self.x + self.texture:getWidth() * self.scaleX and
            y >= self.y and y <= self.y + self.texture:getHeight() * self.scaleY then
             return true

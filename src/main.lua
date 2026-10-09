@@ -192,7 +192,7 @@ end
 function love.update(dt)
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
-    if scene then
+    if scene and scene.update then
         scene.update(dt)
     end
 
@@ -234,13 +234,13 @@ function love.mousereleased(x, y, button)
 end
 
 -- Mouse move; ignored during a wipe.
-function love.mousemoved(x, y, dx, dy)
+function love.mousemoved(x, y)
     if transition.active then return end
 
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
     if scene and scene.mousemoved then
-        scene.mousemoved(x, y, dx, dy)
+        scene.mousemoved(x, y)
     end
 end
 

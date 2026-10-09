@@ -130,7 +130,7 @@ function Scene.mousereleased(x, y, button)
 end
 
 -- Mouse moves drag the held card; ignored while paused.
-function Scene.mousemoved(x, y, dx, dy)
+function Scene.mousemoved(x, y)
     if state.is_paused then return end
 
     input.mousemoved(state, x, y)
@@ -159,8 +159,8 @@ function Scene.update(dt)
 
     state.player_hand:update(dt, layout.CARD_SPEED, state.dragging_card, state.hovered_card)
     state.opponent_hand:update(dt, layout.CARD_SPEED, state.dragging_card, state.hovered_card)
-    state.deck:update(mx, my)
-    state.discard_pile:update(mx, my)
+    state.deck:update(dt, mx, my)
+    state.discard_pile:update(dt, mx, my)
 
     state.animations:update(dt)
 

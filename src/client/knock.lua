@@ -28,12 +28,6 @@ function knock.evaluate(state)
     return discard_card, resulting_deadwood
 end
 
--- True if the player may knock right now: it is their turn, the game runs and a legal discard exists.
-function knock.is_available(state)
-    if not state.is_my_turn or state.is_game_over then return false end
-    return knock.evaluate(state) ~= nil
-end
-
 -- Returns the shown meld arrangement as lists of card names for the knock message.
 -- discard_card is thrown away by the knock, so it is left out of its meld.
 function knock.build_combinations_message(state, discard_card)

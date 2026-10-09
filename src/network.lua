@@ -134,7 +134,8 @@ end
 -- when there is no established connection.
 function network.send(message)
     if server == nil or status ~= "connected" then return false end
-    return pcall(server.send, server, json.encode(message))
+    local ok = pcall(server.send, server, json.encode(message))
+    return ok
 end
 
 return network

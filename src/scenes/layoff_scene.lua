@@ -191,7 +191,7 @@ function Scene.mousepressed(x, y, button)
     if dragging_card == nil then
         for i = #my_cards, 1, -1 do
             local card = my_cards[i]
-            if card:mousepressed(x, y, button) then
+            if card:mousepressed(x, y) then
                 dragging_card = card
                 local cx, cy = card:get_position()
                 drag_offset_x = x - cx
@@ -230,7 +230,7 @@ function Scene.mousereleased(x, y, button)
 end
 
 -- The dragged card follows the cursor, keeping the grab offset.
-function Scene.mousemoved(x, y, dx, dy)
+function Scene.mousemoved(x, y)
     if dragging_card then
         dragging_card:set_position(x - drag_offset_x, y - drag_offset_y)
     end

@@ -66,9 +66,8 @@ function OpponentHand(x, y)
     end
 
 
-    -- Draws all cards with the noise shader and wobble; both arguments are unused here. The previous shader
-    -- is restored afterwards.
-    function self:draw(dragging_card, hovered_card)
+    -- Draws all cards with the noise shader and wobble. The previous shader is restored afterwards.
+    function self:draw()
         local currentShader = love.graphics.getShader()
         love.graphics.setShader(card_shader)
         card_shader:send("time", love.timer.getTime())

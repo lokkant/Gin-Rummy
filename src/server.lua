@@ -53,10 +53,6 @@ local enet = require "enet"
 local love = require "love"
 local json = require "dkjson"
 
--- Marks the graphics module as unavailable (conf.lua already disables it) so shared code that tests
--- `love.graphics` (e.g. the wipe in main.lua) takes the headless path.
-love.graphics = nil
-
 -- If console output shows up late when stdout is redirected, call io.stdout:setvbuf("line") here.
 
 -- ENet host; the two seats (ENet peers, nil while empty); the running Game; rematch_state[peer] = true
@@ -227,7 +223,7 @@ end
 
 -- Scene update: drains all pending ENet events (non-blocking). Each event runs under pcall so one bad
 -- message cannot take the whole server down.
-function Server.update(dt)
+function Server.update()
     if host == nil then return end
 
     local event = host:service(0)

@@ -3,6 +3,7 @@
 -- Deck(x, y, texture, scaleX, scaleY), created in client/layout.lua. x, y is the top-left corner.
 
 local love = require "love"
+local ui = require "ui"
 
 -- Creates the pile at (x, y); hover_scale starts at 1 (no enlargement).
 function Deck(x, y, texture, scaleX, scaleY)
@@ -14,38 +15,35 @@ function Deck(x, y, texture, scaleX, scaleY)
     self.scaleY = scaleY
     self.hover_scale = 1.0
 
-    -- Hover animation: hover_scale grows by 0.05 per call up to 1.1 while the mouse (mx, my) is over the
-    -- pile and shrinks back to 1.0 otherwise. Called every frame, so the speed depends on the frame rate.
-    function self:update(mx, my)
+    -- Hover animation, called every frame: hover_scale grows while the mouse (mx, my) is over the pile
+    -- and shrinks back to 1.0 otherwise (see ui.next_hover_scale). dt is in seconds.
+    function self:update(dt, mx, my)
         local width = self.texture:getWidth() * self.scaleX
         local height = self.texture:getHeight() * self.scaleY
+        local is_hovered = mx >= self.x and mx <= self.x + width and
+                           my >= self.y and my <= self.y + height
 
-        if mx >= self.x and mx <= self.x + width and
-           my >= self.y and my <= self.y + height then
-            self.hover_scale = math.min(self.hover_scale + 0.05, 1.1)
-        else
-            self.hover_scale = math.max(self.hover_scale - 0.05, 1.0)
-        end
+        self.hover_scale = ui.next_hover_scale(self.hover_scale, is_hovered, dt)
     end
 
-    -- Draws the pile enlarged by hover_scale. The top-left corner is shifted by half of the extra width,
-    -- which keeps it centred horizontally (the same shift is used vertically, exact only for square
-    -- sprites).
+    -- Draws the pile enlarged by hover_scale around its centre: the top-left corner moves back by half of
+    -- the extra width and half of the extra height.
     function self:draw()
         local width = self.texture:getWidth() * self.scaleX
-        local scale_offset = (self.hover_scale - 1.0) * width / 2
+        local height = self.texture:getHeight() * self.scaleY
+        local offset_x = (self.hover_scale - 1.0) * width / 2
+        local offset_y = (self.hover_scale - 1.0) * height / 2
 
         love.graphics.draw(self.texture,
-            self.x - scale_offset,
-            self.y - scale_offset,
+            self.x - offset_x,
+            self.y - offset_y,
             0,
             self.scaleX * self.hover_scale,
             self.scaleY * self.hover_scale)
     end
 
-    -- True if the click (x, y) hits the pile. `button` is unused; callers check the mouse button
-    -- themselves.
-    function self:mousepressed(x, y, button)
+    -- True if the click (x, y) hits the pile; callers check the mouse button themselves.
+    function self:mousepressed(x, y)
         if x >= self.x and x <= self.x + self.texture:getWidth() * self.scaleX and
            y >= self.y and y <= self.y + self.texture:getHeight() * self.scaleY then
             return true

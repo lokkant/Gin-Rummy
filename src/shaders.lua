@@ -1,6 +1,6 @@
 -- All GLSL shaders, compiled once when this module is required (client only: needs love.graphics).
 -- They are globals: dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader,
--- highlight_hovered_card_shader and lamp_shader (the return values at the end are not used).
+-- highlight_hovered_card_shader and lamp_shader.
 -- Card shaders use `uv`, the texture coordinate in 0..1 over the whole card image, so their effects scale
 -- with the card. `time` is love.timer.getTime(), sent by the caller every frame before drawing.
 
@@ -220,6 +220,3 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
     return vec4(col, alpha) * color;
 }
 ]])
-
-
-return dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader, highlight_hovered_card_shader, lamp_shader, highlight_hovered_card_shader

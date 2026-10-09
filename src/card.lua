@@ -48,8 +48,8 @@ function Card(rank, suit, x, y, texture, scaleX, scaleY)
         end
     end
 
-    -- True if (x, y) is on the card and the card is clickable (is_active). `button` is unused.
-    function self:mousepressed(x, y, button)
+    -- True if (x, y) is on the card and the card is clickable (is_active).
+    function self:mousepressed(x, y)
         if x >= self.x and x <= self.x + self.texture:getWidth() * self.scaleX and
            y >= self.y and y <= self.y + self.texture:getHeight() * self.scaleY then
             return self.is_active

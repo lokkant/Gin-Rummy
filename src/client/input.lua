@@ -24,11 +24,11 @@ function input.mousepressed(state, x, y, button)
     end
 
     -- take card from deck (one request at a time: the card is only added when the server answers)
-    if state.deck:mousepressed(x, y, button) and state.is_my_turn and #hand.cards == 10 and not state.draw_requested then
+    if state.deck:mousepressed(x, y) and state.is_my_turn and #hand.cards == 10 and not state.draw_requested then
         state.draw_requested = true
         network.send({type = "get_card_from_deck"})
     -- take card from discard pile (not while the opponent's card is still flying onto it)
-    elseif state.discard_pile:mousepressed(x, y, button) then
+    elseif state.discard_pile:mousepressed(x, y) then
         if state.is_my_turn and #hand.cards == 10 and not state.animations:is_active("discard_pile") then
             -- Taken locally at once; taken_from_discard remembers it, because it may not be thrown back
             -- this turn.
@@ -43,7 +43,7 @@ function input.mousepressed(state, x, y, button)
     elseif state.dragging_card == nil then
         for i = #hand.cards, 1, -1 do
             local card = hand.cards[i]
-            if card:mousepressed(x, y, button) then
+            if card:mousepressed(x, y) then
                 local card_x, card_y = card:get_position()
                 state.dragging_card = card
                 state.drag_offset_x = x - card_x
@@ -62,7 +62,7 @@ function input.mousereleased(state, x, y, button)
 
     -- move card to discard pile (the card just taken from it can't go straight back)
     if card ~= nil and card ~= state.taken_from_discard and
-       state.discard_pile:mousepressed(x, y, button) and state.is_my_turn and #state.player_hand.cards == 11 then
+       state.discard_pile:mousepressed(x, y) and state.is_my_turn and #state.player_hand.cards == 11 then
         network.send({type = "put_card_to_discard_pile", card = card.rank .. "_" .. card.suit})
 
         state.discard_pile:add_card(card)

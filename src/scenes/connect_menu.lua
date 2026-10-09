@@ -134,11 +134,6 @@ function Scene.mousepressed(x, y, button)
     end
 end
 
--- Nothing to update; the form only reacts to input.
-function Scene.update(dt)
-
-end
-
 -- Draws the form: table-coloured background, label, text field, error message and the QUIT button.
 function Scene.draw()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
