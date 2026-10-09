@@ -1,9 +1,17 @@
+-- Mouse handling of the game scene while playing: taking cards from the stock or the discard pile, dragging
+-- cards inside the hand, discarding by dropping onto the discard pile, cycling meld arrangements and
+-- pressing KNOCK. Moves are applied optimistically: the client updates its own view and tells the server at
+-- the same time (only a stock draw waits for the server's card). Overlays get the clicks first
+-- (game_client.lua).
+
 local network = require "network"
 local ui = require "ui"
 local knock = require "client/knock"
 
 local input = {}
 
+-- Left button: KNOCK button, stock, discard pile or the start of a card drag. Right button: next best meld
+-- arrangement. A hand of 10 cards means "draw first", 11 cards means "discard (or knock) now".
 function input.mousepressed(state, x, y, button)
     local hand = state.player_hand
 
@@ -22,6 +30,8 @@ function input.mousepressed(state, x, y, button)
     -- take card from discard pile (not while the opponent's card is still flying onto it)
     elseif state.discard_pile:mousepressed(x, y, button) then
         if state.is_my_turn and #hand.cards == 10 and not state.animations:is_active("discard_pile") then
+            -- Taken locally at once; taken_from_discard remembers it, because it may not be thrown back
+            -- this turn.
             local card = state.discard_pile:remove_top_card()
             if card ~= nil then
                 state.taken_from_discard = card
@@ -44,6 +54,9 @@ function input.mousepressed(state, x, y, button)
     end
 end
 
+-- Dropping a dragged card on the discard pile discards it. That needs our turn, 11 cards and a card other
+-- than the one just taken from the pile (the server refuses it too). The local view is updated at once and
+-- our turn is marked finished. Releasing the left button always ends the drag.
 function input.mousereleased(state, x, y, button)
     local card = state.dragging_card
 
@@ -61,13 +74,14 @@ function input.mousereleased(state, x, y, button)
     if button == 1 then state.dragging_card = nil end
 end
 
+-- A dragged card follows the cursor, keeping the offset at which it was grabbed.
 function input.mousemoved(state, x, y)
     if state.dragging_card then
         state.dragging_card:set_position(x - state.drag_offset_x, y - state.drag_offset_y)
     end
 end
 
--- The card under the cursor is lifted; a dragged card has no hover
+-- (mx, my) is the cursor. The card under it is lifted; a dragged card has no hover
 function input.update_hover(state, mx, my)
     if state.dragging_card then
         state.hovered_card = nil

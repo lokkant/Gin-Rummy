@@ -1,28 +1,47 @@
+-- Entry point of the LOVE game: global UI scale, the SceneManager (scene registry + screen wipe) and the
+-- love.* callbacks that forward everything to the current scene. Runs for both the client and the server:
+-- `love . --server` registers only the "server" scene (server.lua), otherwise the client scenes are
+-- registered (scenes/*.lua). A scene is a table with load/update/draw and optional input callbacks. Returns
+-- SceneManager (also a global) so scenes can `require "main"` it.
+
 local love = require "love"
 
 
+-- `scale` (set in update_scale) equals BASE_SCALE in a window of the reference size and follows the window.
 local BASE_SCALE = 2.6
 local REFERENCE_WIDTH = 1920
 local REFERENCE_HEIGHT = 1080
 
+-- Card art is stored at this integer multiple of its logical pixel grid (SCALE in tools/generate_cards.py,
+-- the two must match); cards are drawn at scale / ASSET_RESOLUTION_FACTOR.
 ASSET_RESOLUTION_FACTOR = 3
 
+-- Recomputes the global `scale` from the window size. The smaller of the width/height ratios is used so the
+-- table always fits the window. Does nothing on the server, where the graphics module is disabled
+-- (conf.lua).
 local function update_scale()
     if not love.graphics then return end
     local w, h = love.graphics.getDimensions()
     scale = BASE_SCALE * math.min(w / REFERENCE_WIDTH, h / REFERENCE_HEIGHT)
 end
 
+-- Initial value; love.resize keeps it up to date.
 update_scale()
 
+-- Global scene registry: scenes[name] = scene table; current_scene is the name of the active one (or nil).
 SceneManager = {}
 
 SceneManager.scenes = {}
 SceneManager.current_scene = nil
 
+-- Duration of one half of the wipe (cover or reveal), in seconds.
 local TRANSITION_DURATION = 0.5
+-- RGB colour of the wipe curtain.
 local TRANSITION_COLOR = {0.09, 0.09, 0.11}
 
+-- State of the screen wipe. A dark curtain slides in from the left ("cover"), the real change (scene
+-- switch or on_covered callback, set by begin_transition) is made while the screen is fully hidden,
+-- then the curtain slides out to the right ("reveal"). Input is ignored while `active` (see love.* below).
 local transition = {
     active = false,
     phase = nil,
@@ -32,15 +51,19 @@ local transition = {
     should_load = false
 }
 
+-- Easing for the curtain: fast start, slow finish. t and the result are in 0..1.
 local function ease_out_cubic(t)
     local f = t - 1
     return f * f * f + 1
 end
 
+-- Registers a scene table under `name`; switch/set refer to scenes by this name.
 function SceneManager.add(name, scene)
     SceneManager.scenes[name] = scene
 end
 
+-- Makes `name` the current scene. If should_load, also calls its load(...) with the arguments in the
+-- list `args` (`unpack` is the LuaJIT global).
 local function apply_switch(name, args, should_load)
     SceneManager.current_scene = name
 
@@ -50,6 +73,9 @@ local function apply_switch(name, args, should_load)
     end
 end
 
+-- Starts the wipe. When the screen is fully covered either the scene `name` is activated (should_load:
+-- call its load(...) with `args`) or, when name is nil, `on_covered` is called instead. Without graphics
+-- (server) there is nothing to animate, so the change happens immediately.
 local function begin_transition(name, args, should_load, on_covered)
     if not love.graphics then
         if on_covered then
@@ -69,24 +95,31 @@ local function begin_transition(name, args, should_load, on_covered)
     transition.on_covered = on_covered
 end
 
+-- Switches to scene `name` after the wipe and calls its load(...) with the extra arguments.
 function SceneManager.switch(name, ...)
     begin_transition(name, {...}, true, nil)
 end
 
+-- Switches to an already loaded scene WITHOUT calling load(), so it keeps its state (e.g. back from
+-- the layoff scene to the game scene).
 function SceneManager.set(name)
     begin_transition(name, {}, false, nil)
 end
 
+-- Plays the wipe without changing the scene and runs `on_covered` while the screen is hidden. Used to reset
+-- the table between rounds out of the player's sight.
 function SceneManager.flash(on_covered)
     begin_transition(nil, nil, false, on_covered)
 end
 
+-- Advances the wipe timer by dt and performs the pending change when the "cover" half finishes.
 local function update_transition(dt)
     if not transition.active then return end
 
     transition.timer = transition.timer + dt
 
     if transition.phase == "cover" then
+        -- Fully covered: the change below is invisible to the player.
         if transition.timer >= TRANSITION_DURATION then
             if transition.pending_name ~= nil then
                 apply_switch(transition.pending_name, transition.pending_args, transition.should_load)
@@ -107,6 +140,7 @@ local function update_transition(dt)
 end
 
 
+-- Draws the curtain over the whole window: x goes -w -> 0 while covering and 0 -> w while revealing.
 local function draw_transition()
     if not transition.active then return end
 
@@ -125,6 +159,7 @@ local function draw_transition()
     love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- LOVE entry point. `arg` is the command line; `--server` starts the headless server instead of the game.
 function love.load(arg)
     local is_server = false
     for _, value in ipairs(arg) do
@@ -153,6 +188,7 @@ function love.load(arg)
     -- SceneManager.switch("game", "127.0.0.1:6789")
 end
 
+-- Per-frame update: the current scene first, then the wipe.
 function love.update(dt)
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
@@ -164,6 +200,7 @@ function love.update(dt)
 end
 
 
+-- Per-frame draw: the current scene, with the wipe curtain on top of it.
 function love.draw()
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
@@ -174,6 +211,9 @@ function love.draw()
     draw_transition()
 end
 
+-- Input callbacks below are forwarded to the current scene (when it defines the matching function).
+-- Presses, moves, text and keys are ignored during a wipe so nothing can hit a scene that is about to
+-- change; mousereleased is not blocked, so a drag that began before the wipe can still end.
 function love.mousepressed(x, y, button)
     if transition.active then return end
 
@@ -184,6 +224,7 @@ function love.mousepressed(x, y, button)
     end
 end
 
+-- Mouse release; forwarded even during a wipe (see above).
 function love.mousereleased(x, y, button)
     local scene = SceneManager.scenes[SceneManager.current_scene]
 
@@ -192,6 +233,7 @@ function love.mousereleased(x, y, button)
     end
 end
 
+-- Mouse move; ignored during a wipe.
 function love.mousemoved(x, y, dx, dy)
     if transition.active then return end
 
@@ -202,6 +244,7 @@ function love.mousemoved(x, y, dx, dy)
     end
 end
 
+-- Typed text (used by the connect menu); ignored during a wipe.
 function love.textinput(t)
     if transition.active then return end
 
@@ -212,6 +255,7 @@ function love.textinput(t)
     end
 end
 
+-- Key press; ignored during a wipe.
 function love.keypressed(key)
     if transition.active then return end
 
@@ -222,10 +266,12 @@ function love.keypressed(key)
     end
 end
 
+-- Closes the ENet connection on exit so the server notices the disconnect immediately.
 function love.quit()
     require("network").close()
 end
 
+-- Recomputes the global scale first, then lets the scene re-layout itself.
 function love.resize(w, h)
     update_scale()
 

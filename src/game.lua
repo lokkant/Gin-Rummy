@@ -1,13 +1,25 @@
+-- Rules engine of one two-player Gin Rummy match. Server side only: players are ENet peers (anything with
+-- :send(string)) and the engine pushes the resulting messages to them (protocol: top of server.lua). Global
+-- constructor-style class: `require 'game'` defines Game(player1, player2, deck); server.lua owns it.
+-- Rules: 10 cards each; a turn is a draw (stock or discard pile) followed by a discard or a knock. Knock
+-- needs at most 10 deadwood after the discard; gin = 0 deadwood. Undercut = the defender has no more
+-- deadwood than the knocker. First to WINNING_SCORE wins. Big gin (all 11 cards melded) is treated as plain
+-- gin.
+
 local json = require "dkjson"
 
 require 'server_deck'
 require 'best_melds'
 require 'cards_database'
 
+-- Bonus for knocking with gin (deadwood 0).
 local GIN_BONUS = 25
+-- Bonus for the defender who undercuts the knocker.
 local UNDERCUT_BONUS = 25
+-- The match ends when a player's total score reaches this.
 local WINNING_SCORE = 100
 
+-- Removes the first occurrence of `card_name` from the array `hand`; returns true if it was there.
 local function remove_card_from_hand(hand, card_name)
     for i, name in ipairs(hand) do
         if name == card_name then
@@ -18,6 +30,7 @@ local function remove_card_from_hand(hand, card_name)
     return false
 end
 
+-- Returns true if `card_name` is in the array `hand`.
 local function hand_contains(hand, card_name)
     for _, name in ipairs(hand) do
         if name == card_name then
@@ -27,13 +40,24 @@ local function hand_contains(hand, card_name)
     return false
 end
 
+-- Deadwood value (A = 1, 2-10 face value, J/Q/K = 10) of a card name; the rank is the part before "_".
 local function card_value_from_name(name)
     local rank = string.match(name, "^([%w]+)_")
     return get_card_value({rank = rank})
 end
 
+-- Creates the match state for two peers. `deck` is a ServerDeck for the first round (later rounds replace
+-- it). Returns the game object; call start_game() to deal the first round.
 function Game(player1, player2, deck)
     local self = {}
+    -- Match state: hands are arrays of card names, scores are match totals.
+    --   turn                the peer who acts now
+    --   take_card           this turn's draw already happened
+    --   is_over_move        the discard is done, so next_turn() may pass the turn
+    --   is_new_round        a deal is pending (see start_game)
+    --   pending_knock       {knocker, opponent, knocker_deadwood, knocker_combinations} during layoff
+    --   taken_from_discard  the card picked up from the discard pile this turn; it can't be discarded again
+    --                       (otherwise taking it would be a free pass)
     self.player1 = player1
     self.player2 = player2
     self.player1_score = 0
@@ -48,12 +72,21 @@ function Game(player1, player2, deck)
     self.is_new_round = true
     self.pending_knock = nil
     self.taken_from_discard = nil
-    self.phase = "draw" -- draw -> discard -> (layoff) -> next turn / round over / over; every action checks the phase
+    -- Phase state machine; every action checks it, so out-of-order messages are ignored:
+    --   "draw"       the current player must take a card from the stock or the discard pile -> "discard"
+    --   "discard"    must discard (-> opponent's "draw", or a draw round if the stock is almost empty)
+    --                or knock (gin: scored at once; otherwise -> "layoff")
+    --   "layoff"     waiting for the opponent's finish_layoff; the round is then scored -> next round "draw"
+    --   "round_over" transient: finalize_draw sets it just before start_new_round resets the phase to "draw"
+    --   "over"       someone reached WINNING_SCORE; the Game is dead until a rematch creates a new one
+    self.phase = "draw"
 
+    -- Returns the peer whose turn it is.
     function self:current_turn()
         return self.turn
     end
 
+    -- Returns the hand (array of card names) of `player`.
     function self:get_hand(player)
         if player == player1 then
             return self.player1_hand
@@ -62,6 +95,7 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Returns the other peer.
     function self:get_opponent(player)
         if player == player1 then
             return player2
@@ -70,6 +104,7 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Adds `amount` to the match total of `player`.
     function self:add_score(player, amount)
         if player == player1 then
             self.player1_score = self.player1_score + amount
@@ -78,6 +113,7 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Returns the match total of `player`.
     function self:get_total_score(player)
         if player == player1 then
             return self.player1_score
@@ -86,6 +122,8 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Passes the turn to the other player once the current move is finished (is_over_move) and tells them
+    -- "is_my_turn". Does nothing before that, so it is safe to call after every discard.
     function self:next_turn()
         if self.is_over_move then
             if self.turn == self.player1 then
@@ -104,18 +142,23 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Deals the pending round: 10 cards to each player, one face-up card on the discard pile, then
+    -- "is_my_turn" to the player who starts. Does nothing when no round is pending (is_new_round false).
     function self:start_game()
         if self.is_new_round then
             self.player1_hand = {}
             self.player2_hand = {}
             self.discard_pile = {}
 
+            -- Cards go out one by one so the clients can animate each of them.
             for _ = 1, 10 do
                 local card1 = deck:get_top_card()
                 local card2 = deck:get_top_card()
                 table.insert(self.player1_hand, card1)
                 table.insert(self.player2_hand, card2)
 
+                -- Each player gets their own card by name; the opponent's card is announced without its
+                -- identity.
                 local message1 = json.encode({type = "get_card_from_deck", card = card1})
                 local message2 = json.encode({type = "get_card_from_deck", card = card2})
                 local message3 = json.encode({type = "opponent_get_card_from_deck"})
@@ -130,6 +173,8 @@ function Game(player1, player2, deck)
             self.is_new_round = false
             self.phase = "draw"
 
+            -- Sent last (after the upcard), so the starting player already has the whole table when the
+            -- turn begins.
             local message = json.encode({type = "is_my_turn", answer = true})
             print("Send:", message)
 
@@ -145,6 +190,9 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Draw phase: the current player takes the top stock card. The drawer gets its name, the opponent only
+    -- a hidden-card notice. Ignored in the wrong phase/turn, after the draw was made or when the stock is
+    -- empty.
     function self:get_card_from_deck(player)
         if self.phase == "draw" and not self.take_card and player == self:current_turn() and #deck.cards > 0 then
             local card = deck:get_top_card()
@@ -165,6 +213,8 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Draw phase: the current player takes the top discard card. It is public, so only the opponent is
+    -- told. The card is remembered in taken_from_discard (it can't be thrown back this turn).
     function self:get_card_from_discard_pile(player)
         if self.phase == "draw" and not self.take_card and player == self:current_turn() and #self.discard_pile > 0 then
             local card = table.remove(self.discard_pile)
@@ -183,6 +233,8 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Discard phase: moves `card_name` from the current player's hand to the discard pile and ends the
+    -- turn. Rejected if the card is the one just taken from the discard pile or is not in the hand.
     function self:put_card_to_discard_pile(player, card_name)
         if self.phase == "discard" and self.take_card and player == self:current_turn() then
             local hand = self:get_hand(player)
@@ -198,18 +250,22 @@ function Game(player1, player2, deck)
                     player1:send(message)
                 end
 
+                -- Standard rule: when the stock is down to two cards and nobody knocked, the round is a
+                -- draw (no score).
                 if #deck.cards <= 2 then
-                    -- the stock is (almost) gone: nobody knocked, the round is a draw
                     self:finalize_draw()
                     return
                 end
 
+                -- Marks the move as finished so that next_turn() really passes the turn.
                 self.is_over_move = true;
                 self:next_turn()
             end
         end
     end
 
+    -- Prepares the next round: new shuffled deck (this rebinds the `deck` argument of Game), empty hands,
+    -- phase "draw", the starting player alternates, "new_round" to both, then the deal.
     function self:start_new_round()
         deck = ServerDeck()
         self.player1_hand = {}
@@ -231,9 +287,12 @@ function Game(player1, player2, deck)
         self:start_game()
     end
 
+    -- Ends the round as a draw: nobody scores. Both players get a round_result with is_draw = true (their
+    -- deadwood is shown for information only), then the next round starts at once.
     function self:finalize_draw()
         self.phase = "round_over"
 
+        -- Builds the round_result JSON as seen by `player` (best_combinations returns melds, deadwood).
         local function build_message(player)
             local opponent_player = self:get_opponent(player)
             local _, own_deadwood = best_combinations(self:hand_cards_data(player))
@@ -255,6 +314,7 @@ function Game(player1, player2, deck)
             })
         end
 
+        -- The clients queue these messages: they show the result first, then the "new_round" that follows.
         local message1 = build_message(player1)
         local message2 = build_message(player2)
         print("Send:", message1)
@@ -265,6 +325,8 @@ function Game(player1, player2, deck)
         self:start_new_round()
     end
 
+    -- Converts a player's hand (card names) into texture-less Card objects, the format best_melds.lua works
+    -- on.
     function self:hand_cards_data(player)
         local cards = {}
         for _, name in ipairs(self:get_hand(player)) do
@@ -273,6 +335,9 @@ function Game(player1, player2, deck)
         return cards
     end
 
+    -- Scores a knock and notifies both players, then ends the match or starts the next round.
+    -- knocker_deadwood / opponent_deadwood are final (the opponent's already reduced by layoffs); is_gin:
+    -- the knocker had 0 deadwood; laid_off_value: points of the cards laid off (shown to the players only).
     function self:finalize_round(knocker, opponent_player, knocker_deadwood, opponent_deadwood, is_gin, laid_off_value)
         laid_off_value = laid_off_value or 0
 
@@ -280,6 +345,9 @@ function Game(player1, player2, deck)
         local knocker_round_score = 0
         local opponent_round_score = 0
 
+        -- Undercut: the defender has no more deadwood than the knocker. The defender scores the difference
+        -- plus UNDERCUT_BONUS and the knocker nothing. A gin is never undercut (it is scored before any
+        -- layoff). Otherwise the knocker scores the deadwood difference, plus GIN_BONUS for a gin.
         if not is_gin and opponent_deadwood <= knocker_deadwood then
             is_undercut = true
             opponent_round_score = (knocker_deadwood - opponent_deadwood) + UNDERCUT_BONUS
@@ -293,6 +361,7 @@ function Game(player1, player2, deck)
         self:add_score(knocker, knocker_round_score)
         self:add_score(opponent_player, opponent_round_score)
 
+        -- The same numbers for both players, each from their own point of view (your_* / opponent_*).
         local knocker_message = json.encode({
             type = "round_result",
             you_knocked = true,
@@ -325,6 +394,8 @@ function Game(player1, player2, deck)
         knocker:send(knocker_message)
         opponent_player:send(opponent_message)
 
+        -- The match ends as soon as someone reaches WINNING_SCORE; the higher total wins (the knocker on a
+        -- tie).
         if self:get_total_score(knocker) >= WINNING_SCORE or self:get_total_score(opponent_player) >= WINNING_SCORE then
             self.is_over_game = true
             self.phase = "over"
@@ -347,10 +418,16 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- Knock request: `player` throws away `discard_name` and claims the melds in `combinations` (list of
+    -- lists of card names). Everything is checked against the real hand and an invalid request is silently
+    -- ignored. Deadwood = cards that are neither in a meld nor the discard; it must be <= 10. Deadwood 0 is
+    -- gin: no layoff, the round is scored at once. Otherwise phase "layoff": the knocker waits
+    -- ("waiting_for_layoff") and the opponent gets the melds to lay off onto ("layoff_phase").
     function self:knock(player, discard_name, combinations)
         if self.phase ~= "discard" or self.is_over_game then return end
         if player ~= self:current_turn() then return end
         if not self.take_card then return end
+        -- The card just taken from the discard pile can't be discarded, not even by knocking.
         if type(discard_name) ~= "string" or discard_name == self.taken_from_discard then return end
         if type(combinations) ~= "table" then combinations = {} end
 
@@ -360,15 +437,19 @@ function Game(player1, player2, deck)
         local opponent_player = self:get_opponent(player)
         local opponent_hand = self:get_hand(opponent_player)
 
+        -- used[name] marks cards that are already spoken for (the discard or a meld), so no card counts
+        -- twice.
         local used = {}
         used[discard_name] = true
 
 
         for _, meld in ipairs(combinations) do
+            -- A meld needs at least three cards.
             if type(meld) ~= "table" or #meld < 3 then return end
 
             local meld_cards = {}
             for _, card_name in ipairs(meld) do
+                -- Every card must exist in the knocker's hand and appear only once overall.
                 if type(card_name) ~= "string" or used[card_name] or not hand_contains(hand, card_name) then
                     return
                 end
@@ -376,9 +457,11 @@ function Game(player1, player2, deck)
                 table.insert(meld_cards, get_card_data(card_name))
             end
 
+            -- A valid meld is a set (3-4 cards of one rank) or a run (3+ consecutive cards of one suit).
             if not is_valid_meld(meld_cards) then return end
         end
 
+        -- Whatever is not melded and not discarded is deadwood.
         local knocker_deadwood = 0
         for _, card_name in ipairs(hand) do
             if not used[card_name] then
@@ -386,12 +469,15 @@ function Game(player1, player2, deck)
             end
         end
 
+        -- A knock needs at most 10 points of deadwood.
         if knocker_deadwood > 10 then return end
 
         remove_card_from_hand(hand, discard_name)
         table.insert(self.discard_pile, discard_name)
 
-        -- Let both clients animate the discard face-down before anything else is revealed
+        -- knock_discard goes out before any result, so both clients can play the face-down discard
+        -- animation first (their message queue handles the later layoff_phase / round_result only after it
+        -- finishes).
         local knocker_discard_message = json.encode({type = "knock_discard", card = discard_name, mine = true})
         local opponent_discard_message = json.encode({type = "knock_discard", card = discard_name, mine = false})
         print("Send:", knocker_discard_message)
@@ -401,6 +487,7 @@ function Game(player1, player2, deck)
 
         local is_gin = knocker_deadwood == 0
 
+        -- Gin: no layoff is allowed; the opponent's deadwood is the best melding of their whole hand.
         if is_gin then
             local opponent_cards = {}
             for _, name in ipairs(opponent_hand) do
@@ -412,6 +499,7 @@ function Game(player1, player2, deck)
             return
         end
 
+        -- finish_layoff reads everything it needs from pending_knock.
         self.phase = "layoff"
         self.pending_knock = {
             knocker = player,
@@ -429,6 +517,11 @@ function Game(player1, player2, deck)
         opponent_player:send(layoff_message)
     end
 
+    -- Layoff phase: the knocker's opponent sends `layoffs`, a list of {card, meld_index} meaning "attach
+    -- this card to the meld_index-th knocker meld", in the order the cards were laid. Each entry must be a
+    -- card from the opponent's hand, used once, onto an existing meld that it extends into a valid set/run.
+    -- Invalid entries are skipped. Then the opponent's remaining cards are melded again to get their
+    -- deadwood and the round is scored. Only accepted from the opponent during the "layoff" phase.
     function self:finish_layoff(player, layoffs)
         local pending = self.pending_knock
         if self.phase ~= "layoff" or pending == nil or player ~= pending.opponent then return end
@@ -436,6 +529,8 @@ function Game(player1, player2, deck)
 
         local opponent_hand = self:get_hand(player)
 
+        -- Working copies of the knocker's melds; a successful layoff extends its copy, so a later card can
+        -- attach to the extended meld (e.g. to both ends of a run).
         local meld_cards_by_index = {}
         for i, meld in ipairs(pending.knocker_combinations) do
             local cards = {}
@@ -465,6 +560,7 @@ function Game(player1, player2, deck)
             end
         end
 
+        -- Laid-off cards leave the hand before the remaining deadwood is computed.
         for card_name, _ in pairs(used) do
             remove_card_from_hand(opponent_hand, card_name)
         end

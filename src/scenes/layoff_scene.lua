@@ -1,3 +1,9 @@
+-- Layoff scene (client): shown to the player who did NOT knock. The knocker's melds are displayed and the
+-- player drags cards of their hand onto them (a layoff) to reduce their deadwood; FINISH sends the result.
+-- load() receives the knocker's melds (lists of card names) and our hand cards from the game scene. The
+-- scene is left with SceneManager.set("game"), so the game scene keeps its state and then receives the
+-- round_result. Network messages are not consumed here (see Scene.update).
+
 require 'card'
 require 'cards_database'
 require 'best_melds'
@@ -7,10 +13,18 @@ local network = require "network"
 
 local Scene = {}
 
+-- The knocker's melds: each {cards = {Card, ...}, x, y, width, height}; the geometry is set by
+-- compute_layout.
 local knocker_melds = {}
+-- Our hand in this scene: textured copies of the hand cards; laid off cards are removed.
 local my_cards = {}
+-- Layoffs made so far, in order: {card = "<name>", meld_index = n}. Sent as finish_layoff.layoffs. The
+-- order matters: the server replays it on its own copy of the melds, where each accepted card extends its
+-- meld.
 local laid_off = {}
 
+-- Drag state: the dragged card and where it was grabbed; hovered_card is the hand card lifted by the
+-- cursor.
 local dragging_card
 local drag_offset_x
 local drag_offset_y
@@ -22,8 +36,10 @@ local finish_button_x
 local finish_button_y
 local font
 
+-- Speed (pixels per second) at which cards slide to their targets.
 local SPEED = 1000
 
+-- Creates scaled Card objects (with textures) for a list of card names.
 local function build_meld_cards(names)
     local cards = {}
     for _, name in ipairs(names) do
@@ -34,23 +50,27 @@ local function build_meld_cards(names)
     return cards
 end
 
--- Computes each card's target position; actual movement happens smoothly
--- in Scene.update via card:move_to, except right after Scene.load where
--- cards are snapped straight to their target (see snap_to_target)
+-- Computes each card's target position; the movement itself happens smoothly in Scene.update via
+-- card:move_to, except right after Scene.load, where the cards are snapped straight to their target
+-- (see snap_to_target). Melds are stacked from the top, one row per meld and centred; the hand is a row at
+-- the bottom.
 local function compute_layout()
     local w = love.graphics.getWidth()
     local h = love.graphics.getHeight()
 
+    -- Y of the first meld row.
     local top_y = 100
 
     local card_h = 0
     if #knocker_melds > 0 then
         card_h = knocker_melds[1].cards[1]:get_height()
     end
+    -- Vertical distance between meld rows: a card height plus a gap.
     local meld_spacing_y = card_h + 20
 
     for i, meld in ipairs(knocker_melds) do
         local card_w = meld.cards[1]:get_width()
+        -- Cards of a meld are shifted by 55 % of a card width, so neighbours overlap by 45 %.
         local overlap = card_w * 0.55
         local total_width = overlap * (#meld.cards - 1) + card_w
 
@@ -67,6 +87,7 @@ local function compute_layout()
 
     if #my_cards > 0 then
         local card_w = my_cards[1]:get_width()
+        -- Hand cards overlap less (shifted by 65 % of a card width) than the melds.
         local overlap = card_w * 0.65
         local total_width = overlap * (#my_cards - 1) + card_w
         local start_x = w / 2 - total_width / 2
@@ -74,12 +95,14 @@ local function compute_layout()
 
         for i, card in ipairs(my_cards) do
             local target_y = hand_y
+            -- The hovered card is lifted by a sixth of its height.
             if card == hovered_card then
                 target_y = target_y - card:get_height() / 6
             end
 
             card.target_x = start_x + (i - 1) * overlap
             card.target_y = target_y
+            -- rest_y is the position without the lift; hit testing uses it (see get_hand_card_at).
             card.rest_y = hand_y
         end
     end
@@ -88,6 +111,7 @@ local function compute_layout()
     finish_button_y = h - 90
 end
 
+-- Puts every card exactly on its target (used once after loading, so nothing flies in at the start).
 local function snap_to_target()
     for _, meld in ipairs(knocker_melds) do
         for _, card in ipairs(meld.cards) do
@@ -100,11 +124,14 @@ local function snap_to_target()
     end
 end
 
+-- True if (x, y) is on the FINISH button.
 local function is_point_in_finish_button(x, y)
     return x >= finish_button_x and x <= finish_button_x + FINISH_BUTTON_WIDTH and
            y >= finish_button_y and y <= finish_button_y + FINISH_BUTTON_HEIGHT
 end
 
+-- Returns the index of the knocker's meld under (x, y), or nil. The drop area is the meld's rectangle
+-- enlarged by 25 pixels on each side to make dropping easier.
 local function find_meld_at(x, y)
     for i, meld in ipairs(knocker_melds) do
         if x >= meld.x - 25 and x <= meld.x + meld.width + 25 and
@@ -115,14 +142,19 @@ local function find_meld_at(x, y)
     return nil
 end
 
+-- True once FINISH was pressed or the game ended; then nothing more is sent or updated.
 local finished = false
 
+-- Sends the layoffs to the server and returns to the game scene, which will show the round result.
 local function finish()
     finished = true
     network.send({type = "finish_layoff", layoffs = laid_off})
     SceneManager.set("game")
 end
 
+-- Scene entry, called by SceneManager.switch("layoff", combinations, hand_cards) from the game scene.
+-- combinations: the knocker's melds as lists of card names; my_hand_cards: the Card objects of our hand.
+-- Everything is rebuilt from scratch with fresh textured copies of the hand.
 function Scene.load(combinations, my_hand_cards)
     font = love.graphics.newFont("ArchivoBlack-Regular.ttf")
 
@@ -147,6 +179,7 @@ function Scene.load(combinations, my_hand_cards)
     snap_to_target()
 end
 
+-- Left button: FINISH, or the start of dragging a hand card (the topmost one under the cursor).
 function Scene.mousepressed(x, y, button)
     if button ~= 1 then return end
 
@@ -169,6 +202,9 @@ function Scene.mousepressed(x, y, button)
     end
 end
 
+-- Dropping: if the card is released over a meld that it extends into a valid set or run, it joins that meld
+-- (locally and in `laid_off`) and leaves the hand. Otherwise it slides back to the hand. A meld that grew
+-- can be extended further by later cards.
 function Scene.mousereleased(x, y, button)
     if button ~= 1 or dragging_card == nil then return end
 
@@ -193,6 +229,7 @@ function Scene.mousereleased(x, y, button)
     compute_layout()
 end
 
+-- The dragged card follows the cursor, keeping the grab offset.
 function Scene.mousemoved(x, y, dx, dy)
     if dragging_card then
         dragging_card:set_position(x - drag_offset_x, y - drag_offset_y)
@@ -200,6 +237,9 @@ function Scene.mousemoved(x, y, dx, dy)
 end
 
 
+-- Returns the hand card under (x, y), or nil. Like PlayerHand:get_card_at it tests the REST position
+-- (rest_y), not the lifted one, so the lifted card does not flicker; `current` is the card that is hovered
+-- now and also owns the strip it was lifted over.
 local function get_hand_card_at(x, y, current)
     for i = #my_cards, 1, -1 do
         local card = my_cards[i]
@@ -221,6 +261,8 @@ local function get_hand_card_at(x, y, current)
     return nil
 end
 
+-- Per frame: hover, layout and card movement. The network is polled only to notice that the game ended or
+-- the connection was lost; then we return to the game scene, which shows the outcome.
 function Scene.update(dt)
     if finished then return end
 
@@ -256,6 +298,7 @@ function Scene.update(dt)
     end
 end
 
+-- Draws the title, the melds, our hand, the dragged card on top and the FINISH button.
 function Scene.draw()
     love.graphics.setFont(font)
 

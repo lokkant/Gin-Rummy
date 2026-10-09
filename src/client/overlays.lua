@@ -1,9 +1,15 @@
+-- Everything drawn on top of the table - connection messages, pause menu, round result banner, "waiting for
+-- layoff" banner, game over screen with the rematch buttons and the "back to menu" button - and the click
+-- handling for them. What is shown depends only on state fields (is_paused, is_game_over, round_result,
+-- ...) and network.get_status(). A rect is {x, y, w, h} in window pixels.
+
 local love = require "love"
 local network = require "network"
 local ui = require "ui"
 
 local overlays = {}
 
+-- Button sizes in pixels.
 local REMATCH_BUTTON_WIDTH = 140
 local REMATCH_BUTTON_HEIGHT = 50
 local PAUSE_BUTTON_WIDTH = 260
@@ -11,11 +17,13 @@ local PAUSE_BUTTON_HEIGHT = 50
 local BACK_BUTTON_WIDTH = 260
 local BACK_BUTTON_HEIGHT = 50
 
+-- Button colours, RGBA.
 local GREEN = {0.3, 0.6, 0.3, 1}
 local RED = {0.6, 0.3, 0.3, 1}
 local DARK_RED = {0.6, 0.2, 0.2, 1}
 local GRAY = {0.3, 0.3, 0.3, 1}
 
+-- Returns {yes = rect, no = rect}: two buttons side by side, centred just below the middle of the screen.
 local function get_rematch_buttons()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     local button_y = h / 2 + 10
@@ -29,6 +37,7 @@ local function get_rematch_buttons()
     }
 end
 
+-- Returns {fullscreen, wobble, quit} rects: three buttons stacked around the middle of the screen.
 local function get_pause_buttons()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     local spacing = 20
@@ -43,17 +52,21 @@ local function get_pause_buttons()
     }
 end
 
+-- Returns the rect of the "BACK TO MENU" button, below the middle of the screen.
 local function get_back_button()
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
     return {x = w / 2 - BACK_BUTTON_WIDTH / 2, y = h / 2 + 120, w = BACK_BUTTON_WIDTH, h = BACK_BUTTON_HEIGHT}
 end
 
+-- True when the rematch question needs no answer any more: we answered, the opponent left or the
+-- connection is gone.
 local function is_rematch_resolved(state)
     return state.rematch_response_sent or state.opponent_left or network.get_status() == "disconnected" or
            (state.game_over_info ~= nil and state.game_over_info.opponent_disconnected)
 end
 
--- Text of the "no game right now" overlay, nil when the table should be shown normally
+-- Text of the "no game right now" overlay (connecting, failed, lost, waiting for the second player), nil
+-- when the table should be shown normally.
 function overlays.get_connection_message(state)
     local status = network.get_status()
 
@@ -76,14 +89,17 @@ function overlays.is_back_button_visible(state)
     return state.is_game_over and network.get_status() == "disconnected"
 end
 
--- A full-screen overlay (pause, game over, no connection) covers the table: it must not react to the mouse
+-- A full-screen overlay (pause, game over, no connection) covers the table, which must then not react to
+-- the mouse.
 function overlays.covers_table(state)
     return state.is_paused or state.is_game_over or overlays.get_connection_message(state) ~= nil
 end
 
--- Returns whether an overlay took the click and which action it asks for:
--- "leave", "rematch_yes", "rematch_no", "toggle_fullscreen", "toggle_wobble", "quit" or nil
+-- Returns (consumed, action): whether an overlay took the click and which action it asks for:
+-- "leave", "rematch_yes", "rematch_no", "toggle_fullscreen", "toggle_wobble", "quit" or nil.
+-- Priority: no game / lost connection (back button), then the pause menu, then the game over screen.
 function overlays.handle_click(state, x, y, button)
+    -- The pause menu has its own buttons, so the back button is only offered outside of it.
     if overlays.is_back_button_visible(state) and not state.is_paused then
         if button == 1 and ui.point_in_rect(x, y, get_back_button()) then
             return true, "leave"
@@ -91,6 +107,7 @@ function overlays.handle_click(state, x, y, button)
         return true, nil
     end
 
+    -- Paused: every click is swallowed, only left clicks on the buttons do something.
     if state.is_paused then
         if button ~= 1 then return true, nil end
 
@@ -107,6 +124,8 @@ function overlays.handle_click(state, x, y, button)
         return true, nil
     end
 
+    -- Game over: clicks are swallowed; only left clicks on YES / NO count, and only while the question is
+    -- open.
     if state.is_game_over then
         if button ~= 1 or is_rematch_resolved(state) then return true, nil end
 
@@ -124,6 +143,8 @@ function overlays.handle_click(state, x, y, button)
     return false, nil
 end
 
+-- Headline of the round result banner from this player's point of view (draw, gin, undercut or plain
+-- knock).
 local function get_round_result_title(round_result)
     if round_result.is_draw then
         return "The deck ran out - draw!"
@@ -136,6 +157,8 @@ local function get_round_result_title(round_result)
     return round_result.you_knocked and "You knocked!" or "Opponent knocked!"
 end
 
+-- Draws the round result: a big gold title above the panel for a gin, then a 520 x 240 panel with the
+-- headline, both deadwoods, the laid off points (if any) and the round and total scores.
 local function draw_round_result(state)
     local round_result = state.round_result
     local w, h = 520, 240
@@ -175,6 +198,7 @@ local function draw_round_result(state)
         px, score_y + 40, w, "center")
 end
 
+-- Draws the banner shown to the knocker while the opponent lays off cards.
 local function draw_waiting_for_layoff(state)
     local w, h = 380, 100
     local px, py = love.graphics.getWidth() / 2 - w / 2, love.graphics.getHeight() / 2 - h / 2
@@ -188,6 +212,8 @@ local function draw_waiting_for_layoff(state)
     love.graphics.printf("Waiting for opponent to lay off cards...", px, py + h / 2 - font:getHeight() / 2, w, "center")
 end
 
+-- Draws the end screen: a dark veil, YOU WIN / YOU LOSE and then, in this order of priority, why the match
+-- is really over (opponent disconnected, connection lost, opponent declined) or the rematch question.
 local function draw_game_over(state)
     local info = state.game_over_info
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
@@ -218,6 +244,7 @@ local function draw_game_over(state)
     end
 end
 
+-- Draws a dark veil with the connection message in the middle.
 local function draw_connection(state, message)
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
 
@@ -229,6 +256,8 @@ local function draw_connection(state, message)
     love.graphics.printf(message, 0, h / 2 - 40, w, "center")
 end
 
+-- Draws the pause menu: dark veil, title and the three buttons (the wobble and fullscreen labels show
+-- their current state).
 local function draw_pause(state)
     local w, h = love.graphics.getWidth(), love.graphics.getHeight()
 
@@ -248,6 +277,8 @@ local function draw_pause(state)
     love.graphics.printf("Press ESC to resume", 0, buttons.quit.y + buttons.quit.h + 25, w, "center")
 end
 
+-- Draws all overlays, later ones on top: round result, waiting banner, end screen, connection message,
+-- back button, pause menu.
 function overlays.draw(state)
     if state.round_result ~= nil then
         draw_round_result(state)
