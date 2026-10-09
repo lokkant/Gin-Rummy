@@ -214,7 +214,7 @@ end
 -- Per-frame update: the current scene first, then the wipe.
 function love.update(dt)
     if server.is_running() then
-        server.update()
+        server.update(dt)
     end
 
     local scene = SceneManager.scenes[SceneManager.current_scene]

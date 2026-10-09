@@ -49,6 +49,8 @@ end
 --   hovered_card                    the hand card lifted by the cursor
 --   taken_from_discard              card taken from the discard pile this turn (can't be thrown back)
 --   draw_requested                  a stock draw was sent and its answer is pending
+--   turn_timer                      {elapsed, limits} how long our turn has gone without a game step, and the
+--                                   server's limits (nil when it sent none); see client/impatience.lua
 -- layout.create adds deck, discard_pile, player_hand, opponent_hand, opponent_card_reference and layout.
 local function new_state(address, options)
     return {
@@ -76,7 +78,8 @@ local function new_state(address, options)
         drag_offset_y = 0,
         hovered_card = nil,
         taken_from_discard = nil,
-        draw_requested = false
+        draw_requested = false,
+        turn_timer = nil
     }
 end
 
@@ -176,6 +179,7 @@ function Scene.update(dt)
     state.discard_pile:update(dt, mx, my)
 
     state.animations:update(dt)
+    hud.update(state, dt)
 
     messages.process_next(state)
 
@@ -184,15 +188,14 @@ function Scene.update(dt)
     messages.receive(state)
 end
 
--- Draw order, back to front: table, stock, discard pile, lamps, our hand, flying cards, opponent's hand,
--- KNOCK button, scores, overlays.
+-- Draw order, back to front: table (with the spotlight), stock, discard pile, eye, our hand, flying cards,
+-- opponent's hand, KNOCK button, scores, cracked glass, overlays.
 function Scene.draw()
-    hud.draw_background()
+    hud.draw_background(state)
 
     state.deck:draw()
     state.discard_pile:draw()
-
-    hud.draw_lamps(state)
+    hud.draw_eye(state)
 
     state.player_hand:draw(state.dragging_card, state.hovered_card)
     state.animations:draw()
@@ -200,6 +203,7 @@ function Scene.draw()
 
     hud.draw_knock_button(state)
     hud.draw_scores(state)
+    hud.draw_cracks(state)
 
     overlays.draw(state)
 

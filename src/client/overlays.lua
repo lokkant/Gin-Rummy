@@ -146,7 +146,12 @@ end
 -- Headline of the round result banner from this player's point of view (draw, gin, undercut or plain
 -- knock).
 local function get_round_result_title(round_result)
-    if round_result.is_draw then
+    if round_result.is_timeout then
+        if round_result.you_timed_out then
+            return "You took too long! Opponent gets " .. round_result.opponent_round_score .. " points"
+        end
+        return "Opponent took too long! You get " .. round_result.your_round_score .. " points"
+    elseif round_result.is_draw then
         return "The deck ran out - draw!"
     elseif round_result.is_gin then
         return round_result.you_knocked and "You scored big!" or "Better luck next time"

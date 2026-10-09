@@ -1,6 +1,6 @@
 -- All GLSL shaders, compiled once when this module is required (client only: needs love.graphics).
 -- They are globals: dragging_card_shader, hovered_card_shader, card_shader, highlight_card_shader,
--- highlight_hovered_card_shader and lamp_shader.
+-- highlight_hovered_card_shader and spotlight_shader.
 -- Card shaders use `uv`, the texture coordinate in 0..1 over the whole card image, so their effects scale
 -- with the card. `time` is love.timer.getTime(), sent by the caller every frame before drawing.
 
@@ -189,39 +189,42 @@ vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screen_coords)
 }
 ]])
 
--- Round turn lamp. It is drawn onto a stretched 1x1 white image (see client/hud.lua), so the picture
--- carries no information and everything comes from the texture coordinates. is_on is 0 or 1.
-lamp_shader = love.graphics.newShader([[
+-- The table felt with a light over the half of the active player. It is drawn onto a stretched 1x1 white
+-- image that covers the window (see client/hud.lua), so the picture carries no information and everything
+-- comes from the texture coordinates. The lit half is bright and warm, the other half is darker and covered
+-- with a fine checker pattern, so the difference does not rely on colour alone.
+spotlight_shader = love.graphics.newShader([[
+// time: seconds, set from Lua every frame (the light breathes a little).
 extern number time;
-extern number is_on;
-extern vec3 lamp_color;
+// felt_color: the plain table colour, RGB 0..1.
+extern vec3 felt_color;
+// light_y: vertical position of the light centre, 0 = top edge, 1 = bottom edge; Lua moves it smoothly
+// between the opponent's and the player's side.
+extern number light_y;
+// strength: 0 = flat felt (nobody's turn), 1 = the full effect; also changed smoothly from Lua.
+extern number strength;
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 {
-    // Map the texture coordinates 0..1 to -1..1, so the lamp centre is (0, 0).
-    vec2 uv = texture_coords * 2.0 - 1.0;
-    // dist: distance from the centre; 1 at the middle of the quad's edges.
-    float dist = length(uv);
+    // Elliptical light: wide horizontally and tall enough to reach past the middle of the table, so the
+    // stock and the discard pile stay readable for both players. d is 1 at the edge of the ellipse.
+    vec2 p = (texture_coords - vec2(0.5, light_y)) / vec2(0.85, 0.62);
+    float d = length(p);
 
-    // Gentle pulse between 0.7 and 1.0.
-    float pulse = 0.85 + 0.15 * sin(time * 1.0);
+    // lit: 1 in the centre of the light, 0 outside the ellipse; a slow +-4 % breathing.
+    float lit = (1.0 - smoothstep(0.15, 1.0, d)) * (0.96 + 0.04 * sin(time * 1.5));
 
-    // body: solid disc of radius about 0.36 with a soft edge.
-    float body = 1.0 - smoothstep(0.32, 0.4, dist);
-    // glow: halo that fades out towards the quad border, only visible when the lamp is on.
-    float glow = (1.0 - smoothstep(0.35, 1.0, dist)) * is_on * pulse;
-    // highlight: small bright spot up and left of the centre that gives the lamp a glassy look.
-    float highlight = (1.0 - smoothstep(0.0, 0.22, length(uv - vec2(-0.12, -0.16)))) * is_on;
+    // Brightness from 0.6 (unlit) to 1.1 (lit) and a little warm yellow in the lit area.
+    float brightness = mix(0.6, 1.1, lit);
+    vec3 col = felt_color * brightness + vec3(0.07, 0.05, 0.0) * lit;
 
-    // Dull brown when off, the pulsing lamp colour when on.
-    vec3 offColor = vec3(0.22, 0.18, 0.14);
-    vec3 onColor = lamp_color * pulse;
+    // Checker of 3x3 pixels that darkens the unlit area a bit more (dither).
+    float checker = mod(floor(screen_coords.x / 3.0) + floor(screen_coords.y / 3.0), 2.0);
+    col *= 1.0 - 0.07 * (1.0 - lit) * checker;
 
-    // is_on selects between the two colours; the highlight spot adds a little white.
-    vec3 col = mix(offColor, onColor, is_on) + highlight * 0.6;
-    // The glow is half transparent, the body is opaque.
-    float alpha = clamp(body + glow * 0.5, 0.0, 1.0);
+    // strength fades the whole effect in and out.
+    col = mix(felt_color, col, strength);
 
-    return vec4(col, alpha) * color;
+    return vec4(col, 1.0) * color;
 }
 ]])

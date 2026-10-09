@@ -24,6 +24,16 @@ The start menu offers two ways to play:
 
 For the game to work, users and the server must be able to reach each other.
 
+## Settings
+
+The tunable numbers are in `src/config.lua`: the turn timer (when the eye starts to turn red, when it is fully
+red, when the screen cracks, when the round is lost by waiting and how many points the opponent gets for it)
+and a few visual values. The values in the file are small, for debugging. To change them without rebuilding,
+create a file `user_config.lua` in the game's save directory that returns a table with the keys to change,
+for example `return {idle_warning_start = 20, idle_warning_full_delay = 25, idle_loss_delay = 5}` (the eye turns
+red from 20 s, is fully red at 45 s, the glass cracks at 46 s and the round is lost at 51 s). The server enforces the timeout and sends
+the numbers to the clients, so the settings of the player who hosts the game count.
+
 <img width="1919" height="1199" alt="изображение" src="https://github.com/user-attachments/assets/e26aeda8-8997-45b5-b1cd-420c5cba1570" />
 
 ## Game Recordings

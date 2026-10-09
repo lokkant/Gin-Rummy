@@ -5,6 +5,8 @@
 -- pause, the result banner and the table reset one after another, not all at once. handlers[type](state,
 -- message) apply a message to the state table of scenes/game_client.lua.
 
+require 'cards_database'
+
 local love = require "love"
 local network = require "network"
 local layout = require "client/layout"
@@ -27,12 +29,19 @@ local function copy(original)
     return copy_t
 end
 
+-- Names of all 52 cards; hidden opponent cards borrow a random one (see add_opponent_card).
+local card_names = get_card_names()
+
 -- Adds a face-down card to the opponent's hand. It is a clone of the reference card back, starting at
 -- (x, y) (the stock or the discard pile) and sliding to its slot. The clone shares the reference's
--- wobble_seed, so a new one is drawn, otherwise all opponent cards would sway in sync.
+-- wobble_seed, so a new one is drawn, otherwise all opponent cards would sway in sync. It also gets a
+-- random rank and suit (the real card is unknown and never shown): OpponentHand sorts its cards, so with
+-- identical values every new card would land at the same end of the fan, while random ones slide into a
+-- random place between the others, like cards that are really being sorted in a hand.
 local function add_opponent_card(state, x, y)
     local card = copy(state.opponent_card_reference)
     card.wobble_seed = love.math.random() * 2 * math.pi
+    card.rank, card.suit = string.match(card_names[love.math.random(#card_names)], "([%w]+)_([%a]+)")
     card:set_position(x, y)
     state.opponent_hand:add_card(card)
 end
@@ -104,9 +113,16 @@ local handlers = {}
 
 -- Our turn begins: forget the card taken from the discard pile last turn and allow a new draw request.
 function handlers.is_my_turn(state, message)
+    state.turn_timer = message.limits and {elapsed = 0, limits = message.limits} or nil
     state.taken_from_discard = nil
     state.draw_requested = false
     state.is_my_turn = message.answer
+
+    -- This handler runs only now, after the result banner, the deal and the opponent's animations. The
+    -- server starts our turn timer when it hears this, so our clock and the server's start together.
+    if message.answer then
+        network.send({type = "turn_started"})
+    end
 end
 
 -- The face-up card that starts the round appears on the discard pile.
@@ -148,6 +164,9 @@ function handlers.get_card_from_deck(state, message)
     card:set_scale(layout.card_scale(), layout.card_scale())
     state.draw_requested = false
     state.player_hand:add_card(card)
+
+    -- a game step: the turn timer starts again
+    if state.turn_timer then state.turn_timer.elapsed = 0 end
 end
 
 -- The knock discard animation is handle_knock_discard above.

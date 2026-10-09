@@ -36,6 +36,9 @@ function input.mousepressed(state, x, y, button)
             if card ~= nil then
                 state.taken_from_discard = card
                 hand:add_card(card)
+
+                -- a game step: the turn timer starts again
+                if state.turn_timer then state.turn_timer.elapsed = 0 end
                 network.send({type = "get_card_from_discard_pile"})
             end
         end

@@ -91,6 +91,11 @@ function layout.apply(state, w, h)
     state.deck.scaleY = card_scale
     state.deck.y = h / 2 - info.deck_texture:getHeight() * card_scale / 2
 
+    -- The eye sits opposite the stock pile: as far from the right edge as the pile is from the left one,
+    -- level with it.
+    local deck_width = info.deck_texture:getWidth() * card_scale
+    info.eye_center = {x = w - (state.deck.x + deck_width / 2), y = h / 2}
+
     state.discard_pile.scaleX = card_scale
     state.discard_pile.scaleY = card_scale
     state.discard_pile.x = w / 2 - state.discard_pile:get_width() / 2

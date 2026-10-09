@@ -13,6 +13,8 @@
 --
 -- Client -> server (routed in handle_message below, rules in game.lua)
 --   type                        fields                    meaning
+--   turn_started                -                         the client has shown the is_my_turn: the turn
+--                                                         timer starts counting now
 --   get_card_from_deck          -                         draw the top stock card (draw phase)
 --   get_card_from_discard_pile  -                         take the top discard card (draw phase)
 --   put_card_to_discard_pile    card                      discard a card, ends the turn (discard phase)
@@ -30,7 +32,12 @@
 --   get_card_from_deck                    card             you received this card (deal or draw)
 --   opponent_get_card_from_deck           -                the opponent received a hidden card
 --   update_discard_pile                   card             both: the face-up card that starts the round
---   is_my_turn                            answer (true)    your turn starts (draw phase)
+--   is_my_turn                            answer (true), limits
+--                                                          your turn starts (draw phase); limits =
+--                                                          {fade_start, fade_full, crack, timeout}: seconds
+--                                                          without a game step after which the eye turns
+--                                                          red / is fully red / the screen cracks / the
+--                                                          round is lost (see config.lua)
 --   opponent_get_card_from_discard_pile   -                the opponent took the top discard card
 --   opponent_place_card_to_discard_pile   card             the opponent discarded this card
 --   knock_discard                         card, mine       both: the knocker's discard; mine = you knocked
@@ -40,12 +47,15 @@
 --                                                          cards and the defender's hand, all face up
 --   opponent_layoff                       card, meld_index to the knocker: the defender attached this card
 --                                                          to that meld
---   round_result                          you_knocked, is_gin, is_undercut, [is_draw], your_deadwood,
+--   round_result                          you_knocked, is_gin, is_undercut, [is_draw], [is_timeout],
+--                                         [you_timed_out], your_deadwood,
 --                                         opponent_deadwood, laid_off_value, laid_off_cards,
 --                                         opponent_cards, opponent_melds, your_round_score,
 --                                         opponent_round_score, your_total_score, opponent_total_score
 --                                                          the round is scored (each player gets their
---                                                          own point of view; is_draw only for a draw).
+--                                                          own point of view; is_draw only for a draw,
+--                                                          is_timeout when a player took too long and the
+--                                                          opponent got the penalty points).
 --                                                          opponent_cards / opponent_melds: the opponent's
 --                                                          final hand, to be shown face up with its melds;
 --                                                          laid_off_cards leave the defender's hand
@@ -181,7 +191,9 @@ local function handle_message(peer, data)
 
     if game == nil then return end
 
-    if message.type == "get_card_from_deck" then
+    if message.type == "turn_started" then
+        game:turn_started(peer)
+    elseif message.type == "get_card_from_deck" then
         game:get_card_from_deck(peer)
     elseif message.type == "put_card_to_discard_pile" then
         game:put_card_to_discard_pile(peer, message.card)
@@ -262,9 +274,9 @@ function Server.is_running()
     return host ~= nil
 end
 
--- Per-frame work: drains all pending ENet events (non-blocking). Each event runs under pcall so one bad
--- message cannot take the whole server down.
-function Server.update()
+-- Per-frame work (dt in seconds): drains all pending ENet events (non-blocking) and runs the game's turn
+-- timer. Each event runs under pcall so one bad message cannot take the whole server down.
+function Server.update(dt)
     if host == nil then return end
 
     local event = host:service(0)
@@ -276,6 +288,13 @@ function Server.update()
         end
 
         event = host:service(0)
+    end
+
+    if game ~= nil then
+        local ok, err = pcall(game.update, game, dt)
+        if not ok then
+            print("ERROR in the turn timer:", err)
+        end
     end
 end
 

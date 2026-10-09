@@ -7,6 +7,7 @@
 -- gin.
 
 local json = require "dkjson"
+local config = require "config"
 
 require 'server_deck'
 require 'best_melds'
@@ -60,6 +61,10 @@ function Game(player1, player2, deck)
     --                       laid_off_cards (names, in order), laid_off_value (points)}
     --   taken_from_discard  the card picked up from the discard pile this turn; it can't be discarded again
     --                       (otherwise taking it would be a free pass)
+    --   idle_time           seconds the player to move has gone without a game step (see update)
+    --   turn_acknowledged   the client confirmed it showed this turn (turn_started); idle_time only counts
+    --                       from then, or after config.turn_ack_wait seconds without an answer
+    --   ack_wait            seconds spent waiting for that confirmation
     self.player1 = player1
     self.player2 = player2
     self.player1_score = 0
@@ -74,6 +79,9 @@ function Game(player1, player2, deck)
     self.is_new_round = true
     self.pending_knock = nil
     self.taken_from_discard = nil
+    self.idle_time = 0
+    self.turn_acknowledged = false
+    self.ack_wait = 0
     -- Phase state machine; every action checks it, so out-of-order messages are ignored:
     --   "draw"       the current player must take a card from the stock or the discard pile -> "discard"
     --   "discard"    must discard (-> opponent's "draw", or a draw round if the stock is almost empty)
@@ -125,6 +133,31 @@ function Game(player1, player2, deck)
         end
     end
 
+    -- The turn timer limits in seconds from the last game step (config.lua): the eye gets red from
+    -- fade_start to fade_full, the glass cracks at crack, and at timeout the round is lost. Each moment is
+    -- counted from the one before it (config.lua), so they can never get out of step.
+    local function get_idle_limits()
+        local fade_full = config.idle_warning_start + config.idle_warning_full_delay
+        local crack = fade_full + config.idle_crack_delay
+
+        return {
+            fade_start = config.idle_warning_start,
+            fade_full = fade_full,
+            crack = crack,
+            timeout = crack + config.idle_loss_delay
+        }
+    end
+
+    -- The "is_my_turn" JSON. It carries the turn timer limits so that the client can show the player how
+    -- long they have been taking.
+    local function build_turn_message()
+        return json.encode({
+            type = "is_my_turn",
+            answer = true,
+            limits = get_idle_limits()
+        })
+    end
+
     -- Passes the turn to the other player once the current move is finished (is_over_move) and tells them
     -- "is_my_turn". Does nothing before that, so it is safe to call after every discard.
     function self:next_turn()
@@ -137,9 +170,12 @@ function Game(player1, player2, deck)
             self.take_card = false
             self.is_over_move = false
             self.taken_from_discard = nil
+            self.idle_time = 0
+            self.turn_acknowledged = false
+            self.ack_wait = 0
             self.phase = "draw"
 
-            local message = json.encode({type = "is_my_turn", answer = true})
+            local message = build_turn_message()
             print("Send:", message)
             self.turn:send(message)
         end
@@ -178,7 +214,10 @@ function Game(player1, player2, deck)
 
             -- Sent last (after the upcard), so the starting player already has the whole table when the
             -- turn begins.
-            local message = json.encode({type = "is_my_turn", answer = true})
+            self.idle_time = 0
+            self.turn_acknowledged = false
+            self.ack_wait = 0
+            local message = build_turn_message()
             print("Send:", message)
 
             local top_discard = deck:get_top_card()
@@ -212,6 +251,7 @@ function Game(player1, player2, deck)
                 player1:send(message2)
             end
             self.take_card = true
+            self.idle_time = 0
             self.phase = "discard"
         end
     end
@@ -232,6 +272,7 @@ function Game(player1, player2, deck)
                 player1:send(message)
             end
             self.take_card = true
+            self.idle_time = 0
             self.phase = "discard"
         end
     end
@@ -264,6 +305,40 @@ function Game(player1, player2, deck)
                 self.is_over_move = true
                 self:next_turn()
             end
+        end
+    end
+
+    -- The client of `player` reports that it has just shown them their turn (the "is_my_turn" message may
+    -- wait in its queue behind the result banner or the deal), so the turn timer starts now. Only valid
+    -- once per turn, from the player to move.
+    function self:turn_started(player)
+        if self.phase ~= "draw" or player ~= self.turn or self.turn_acknowledged then return end
+
+        self.turn_acknowledged = true
+        self.idle_time = 0
+    end
+
+    -- Per frame (dt in seconds): while a player has to draw or discard, counts the time since their last game
+    -- step (the start of the turn once the client confirmed it, taking a card). When it reaches
+    -- the timeout limit (get_idle_limits) the player has delayed too long and loses the round
+    -- (finalize_timeout). Other phases have no timer.
+    function self:update(dt)
+        if self.phase ~= "draw" and self.phase ~= "discard" then return end
+
+        -- Until the client confirms the turn nothing is counted; a client that never does is not allowed to
+        -- stop the game for longer than config.turn_ack_wait.
+        if not self.turn_acknowledged then
+            self.ack_wait = self.ack_wait + dt
+            if self.ack_wait < config.turn_ack_wait then return end
+
+            self.turn_acknowledged = true
+            self.idle_time = 0
+        end
+
+        self.idle_time = self.idle_time + dt
+
+        if self.idle_time >= get_idle_limits().timeout then
+            self:finalize_timeout(self.turn)
         end
     end
 
@@ -378,6 +453,54 @@ function Game(player1, player2, deck)
         self:start_new_round()
     end
 
+    -- The round is lost by waiting: `slow_player` took too long, the opponent gets config.timeout_penalty
+    -- points. Both get a round_result with is_timeout = true (you_timed_out tells who was slow) and the
+    -- opponent's cards face up; then the match goes on or ends like after any other round.
+    function self:finalize_timeout(slow_player)
+        self.phase = "round_over"
+
+        local winner = self:get_opponent(slow_player)
+        self:add_score(winner, config.timeout_penalty)
+
+        -- The round_result JSON as seen by `player`.
+        local function build_message(player)
+            local opponent_player = self:get_opponent(player)
+            local _, own_deadwood = best_combinations(self:hand_cards_data(player))
+            local _, opponent_deadwood = best_combinations(self:hand_cards_data(opponent_player))
+            local reveal = self:reveal_fields(player)
+            local own_score = (player == winner) and config.timeout_penalty or 0
+            local opponent_score = (player == winner) and 0 or config.timeout_penalty
+
+            return json.encode({
+                type = "round_result",
+                you_knocked = false,
+                is_gin = false,
+                is_undercut = false,
+                is_timeout = true,
+                you_timed_out = (player == slow_player),
+                your_deadwood = own_deadwood,
+                opponent_deadwood = opponent_deadwood,
+                laid_off_value = 0,
+                laid_off_cards = {},
+                opponent_cards = reveal.opponent_cards,
+                opponent_melds = reveal.opponent_melds,
+                your_round_score = own_score,
+                opponent_round_score = opponent_score,
+                your_total_score = self:get_total_score(player),
+                opponent_total_score = self:get_total_score(opponent_player)
+            })
+        end
+
+        local message1 = build_message(player1)
+        local message2 = build_message(player2)
+        print("Send:", message1)
+        print("Send:", message2)
+        player1:send(message1)
+        player2:send(message2)
+
+        self:conclude_round(winner, slow_player)
+    end
+
     -- Converts a player's hand (card names) into texture-less Card objects, the format best_melds.lua works
     -- on.
     function self:hand_cards_data(player)
@@ -386,6 +509,31 @@ function Game(player1, player2, deck)
             table.insert(cards, get_card_data(name))
         end
         return cards
+    end
+
+    -- After the scores of a round are in: the match ends as soon as someone reaches WINNING_SCORE (the
+    -- higher total wins, `first` on a tie), otherwise the next round starts.
+    function self:conclude_round(first, second)
+        if self:get_total_score(first) >= WINNING_SCORE or self:get_total_score(second) >= WINNING_SCORE then
+            self.is_over_game = true
+            self.phase = "over"
+
+            local winner = first
+            if self:get_total_score(second) > self:get_total_score(first) then
+                winner = second
+            end
+            local loser = (winner == first) and second or first
+
+            local win_message = json.encode({type = "game_over", you_won = true})
+            local lose_message = json.encode({type = "game_over", you_won = false})
+
+            print("Send:", win_message)
+            print("Send:", lose_message)
+            winner:send(win_message)
+            loser:send(lose_message)
+        else
+            self:start_new_round()
+        end
     end
 
     -- Scores a knock and notifies both players, then ends the match or starts the next round.
@@ -460,28 +608,7 @@ function Game(player1, player2, deck)
         knocker:send(knocker_message)
         opponent_player:send(opponent_message)
 
-        -- The match ends as soon as someone reaches WINNING_SCORE; the higher total wins (the knocker on a
-        -- tie).
-        if self:get_total_score(knocker) >= WINNING_SCORE or self:get_total_score(opponent_player) >= WINNING_SCORE then
-            self.is_over_game = true
-            self.phase = "over"
-
-            local winner = knocker
-            if self:get_total_score(opponent_player) > self:get_total_score(knocker) then
-                winner = opponent_player
-            end
-            local loser = (winner == knocker) and opponent_player or knocker
-
-            local win_message = json.encode({type = "game_over", you_won = true})
-            local lose_message = json.encode({type = "game_over", you_won = false})
-
-            print("Send:", win_message)
-            print("Send:", lose_message)
-            winner:send(win_message)
-            loser:send(lose_message)
-        else
-            self:start_new_round()
-        end
+        self:conclude_round(knocker, opponent_player)
     end
 
     -- Knock request: `player` throws away `discard_name` and claims the melds in `combinations` (list of
