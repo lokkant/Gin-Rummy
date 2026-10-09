@@ -39,7 +39,7 @@ local function shuffle(tbl)
     return tbl
 end
 
-function Deck()
+function ServerDeck()
     local self = {}
     self.cards = shuffle(get_card_names()) -- Use the cards from the cardsDatabase.lua and shuffle them
 
@@ -50,4 +50,4 @@ function Deck()
     return self
 end
 
-return Deck
+return ServerDeck

@@ -36,9 +36,9 @@ function OpponentHand(x, y)
 
 
     function self:remove_random_card()
-        if #self.cards == 0 then return end
+        if #self.cards == 0 then return nil end
         local index = love.math.random(#self.cards)
-        table.remove(self.cards, index)
+        return table.remove(self.cards, index)
     end
 
 

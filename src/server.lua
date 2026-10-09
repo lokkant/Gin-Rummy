@@ -18,7 +18,7 @@ local rematch_state
 local Server = {}
 
 local function start_new_match()
-    game = Game(player1, player2, Deck())
+    game = Game(player1, player2, ServerDeck())
     rematch_state = nil
 
     local message = json.encode({type = "new_game"})

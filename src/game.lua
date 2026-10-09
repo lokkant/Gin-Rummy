@@ -211,7 +211,7 @@ function Game(player1, player2, deck)
     end
 
     function self:start_new_round()
-        deck = Deck()
+        deck = ServerDeck()
         self.player1_hand = {}
         self.player2_hand = {}
         self.discard_pile = {}

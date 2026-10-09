@@ -5,6 +5,7 @@ require 'opponent_hand'
 require 'discard_pile'
 require 'shaders'
 require 'cards_database'
+require 'animations'
 
 local love = require "love"
 local network = require "network"
@@ -23,9 +24,8 @@ local drag_offset_x
 local drag_offset_y
 local hovered_card
 local opponent_card_reference
-local new_card_in_discard_pile
 local taken_from_discard
-local movable_card_from_opponent_to_discard_pile
+local animations
 
 local OPPONENT_Y_FRACTION = 100 / 1080
 local HAND_Y_FRACTION = 750 / 1080
@@ -45,7 +45,7 @@ local MAX_HAND_CARDS = 11
 local is_my_turn = false
 local is_game_over = false
 local round_result
-local round_result_timer = 0
+local ROUND_RESULT_DURATION = 6
 local game_over_info
 local my_total_score = 0
 local opponent_total_score = 0
@@ -55,7 +55,6 @@ local rematch_response_sent = false
 local opponent_left = false
 
 local LEAVE_DELAY = 3
-local leave_timer = 0
 
 local REMATCH_BUTTON_WIDTH = 140
 local REMATCH_BUTTON_HEIGHT = 50
@@ -69,10 +68,7 @@ local BACK_BUTTON_HEIGHT = 50
 local server_address = ""
 
 local pending_messages = {}
-local knock_discard_anim
 local KNOCK_PAUSE_DURATION = 2
-local knock_pause_timer = 0
-local flash_pending = false
 local has_started_first_game = false
 
 local font
@@ -90,13 +86,8 @@ function Scene.load(ip)
     network.connect(ip)
 
     pending_messages = {}
-    movable_card_from_opponent_to_discard_pile = nil
-    new_card_in_discard_pile = nil
-    knock_discard_anim = nil
-    knock_pause_timer = 0
-    flash_pending = false
+    animations = Animations()
     has_started_first_game = false
-    leave_timer = 0
 
     dragging_card = nil
     hovered_card = nil
@@ -105,7 +96,6 @@ function Scene.load(ip)
     is_game_over = false
     is_paused = false
     round_result = nil
-    round_result_timer = 0
     game_over_info = nil
     my_total_score = 0
     opponent_total_score = 0
@@ -222,10 +212,25 @@ local function draw_turn_lamp(cx, cy, is_on)
     love.graphics.setShader()
 end
 
+local function leave_to_menu()
+    network.close()
+    SceneManager.switch("menu")
+end
+
+local function get_discard_pile_position()
+    return discard_pile:get_position()
+end
+
+local function fly_to_discard_pile(flying_card, options)
+    animations:move_card(flying_card, get_discard_pile_position, SPEED, options)
+end
+
 local function handle_knock_discard(message)
-    local flying_card = copy(opponent_card_reference)
+    local flying_card
 
     if message.mine then
+        flying_card = copy(opponent_card_reference)
+
         local rank, suit = string.match(message.card, "^([%w]+)_([%a]+)$")
         for _, card in ipairs(player_hand.cards) do
             if card.rank == rank and card.suit == suit then
@@ -236,10 +241,16 @@ local function handle_knock_discard(message)
         end
         player_hand:remove_card(rank, suit)
     else
-        opponent_hand:remove_random_card()
+        flying_card = opponent_hand:remove_random_card() or copy(opponent_card_reference)
     end
 
-    knock_discard_anim = flying_card
+    fly_to_discard_pile(flying_card, {
+        blocking = true,
+        on_finish = function()
+            discard_pile:add_card(flying_card)
+            animations:delay(KNOCK_PAUSE_DURATION, {blocking = true})
+        end
+    })
 end
 
 local function handle_message(message)
@@ -255,9 +266,15 @@ local function handle_message(message)
         opponent_card_reference_copy:set_position(deck:get_position())
         opponent_hand:add_card(opponent_card_reference_copy)
     elseif message.type == "opponent_place_card_to_discard_pile" then
-        movable_card_from_opponent_to_discard_pile = copy(opponent_card_reference)
-        new_card_in_discard_pile = get_card(message.card)
-        opponent_hand:remove_random_card()
+        local flying_card = opponent_hand:remove_random_card() or copy(opponent_card_reference)
+        local placed_card = get_card(message.card)
+
+        fly_to_discard_pile(flying_card, {
+            tag = "discard_pile",
+            on_finish = function()
+                discard_pile:add_card(placed_card)
+            end
+        })
     elseif message.type == "opponent_get_card_from_discard_pile" then
         discard_pile:remove_top_card()
         local opponent_card_reference_copy = copy(opponent_card_reference)
@@ -278,8 +295,8 @@ local function handle_message(message)
         opponent_hand:reset()
         discard_pile:reset()
         is_my_turn = false
+        animations:cancel("round_result")
         round_result = nil
-        round_result_timer = 0
         waiting_for_layoff = false
     elseif message.type == "waiting_for_layoff" then
         waiting_for_layoff = true
@@ -288,7 +305,14 @@ local function handle_message(message)
         SceneManager.switch("layoff", message.combinations, player_hand.cards)
     elseif message.type == "round_result" then
         round_result = message
-        round_result_timer = 6
+        animations:cancel("round_result")
+        animations:delay(ROUND_RESULT_DURATION, {
+            tag = "round_result",
+            blocking = true,
+            on_finish = function()
+                round_result = nil
+            end
+        })
         my_total_score = message.your_total_score
         opponent_total_score = message.opponent_total_score
         is_my_turn = false
@@ -301,11 +325,11 @@ local function handle_message(message)
         rematch_response_sent = false
         opponent_left = false
         if message.opponent_disconnected then
-            leave_timer = LEAVE_DELAY
+            animations:delay(LEAVE_DELAY, {tag = "leave", on_finish = leave_to_menu})
         end
     elseif message.type == "opponent_declined_rematch" then
         opponent_left = true
-        leave_timer = LEAVE_DELAY
+        animations:delay(LEAVE_DELAY, {tag = "leave", on_finish = leave_to_menu})
     elseif message.type == "new_game" then
         dragging_card = nil
         taken_from_discard = nil
@@ -316,28 +340,24 @@ local function handle_message(message)
         is_my_turn = false
         is_game_over = false
         game_over_info = nil
+        animations:cancel("round_result")
+        animations:cancel("leave")
         round_result = nil
-        round_result_timer = 0
         waiting_for_layoff = false
         my_total_score = 0
         opponent_total_score = 0
         rematch_response_sent = false
         opponent_left = false
-        leave_timer = 0
     end
 end
 
 
-local function is_busy()
-    return knock_discard_anim ~= nil or knock_pause_timer > 0 or round_result_timer > 0 or flash_pending
-end
-
 local function is_discard_pile_updating()
-    return movable_card_from_opponent_to_discard_pile ~= nil or new_card_in_discard_pile ~= nil
+    return animations:is_active("discard_pile")
 end
 
 local function process_next_queued_message()
-    if is_busy() or #pending_messages == 0 then return end
+    if animations:is_busy() or #pending_messages == 0 then return end
 
     local message = table.remove(pending_messages, 1)
 
@@ -345,11 +365,12 @@ local function process_next_queued_message()
         has_started_first_game = true
         handle_message(message)
     elseif message.type == "new_round" or message.type == "new_game" then
-        flash_pending = true
-        SceneManager.flash(function()
-            handle_message(message)
-            flash_pending = false
-        end)
+        animations:wait_for(function(done)
+            SceneManager.flash(function()
+                handle_message(message)
+                done()
+            end)
+        end, {blocking = true})
     else
         handle_message(message)
     end
@@ -413,12 +434,6 @@ end
 
 local function is_point_in_rect(x, y, rect)
     return x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h
-end
-
-local function leave_to_menu()
-    leave_timer = 0
-    network.close()
-    SceneManager.switch("menu")
 end
 
 local function is_rematch_resolved()
@@ -586,43 +601,7 @@ function Scene.update(dt)
     deck:update(mx, my)
     discard_pile:update(mx, my)
 
-    if round_result_timer > 0 then
-        round_result_timer = round_result_timer - dt
-        if round_result_timer <= 0 then
-            round_result_timer = 0
-            round_result = nil
-        end
-    end
-
-    if leave_timer > 0 then
-        leave_timer = leave_timer - dt
-        if leave_timer <= 0 then
-            leave_to_menu()
-        end
-    end
-
-    -- move card from opponent hand to discard pile
-    if movable_card_from_opponent_to_discard_pile ~= nil then
-        movable_card_from_opponent_to_discard_pile:move_to(dt, SPEED, discard_pile:get_position())
-        if movable_card_from_opponent_to_discard_pile:get_position() == discard_pile:get_position() then
-            movable_card_from_opponent_to_discard_pile = nil
-            discard_pile:add_card(new_card_in_discard_pile)
-            new_card_in_discard_pile = nil
-        end
-    end
-
-    -- knock discard: card flies face-down to the pile, then a suspense pause
-    if knock_discard_anim ~= nil then
-        knock_discard_anim:move_to(dt, SPEED, discard_pile:get_position())
-        if knock_discard_anim:get_position() == discard_pile:get_position() then
-            discard_pile:add_card(knock_discard_anim)
-            knock_discard_anim = nil
-            knock_pause_timer = KNOCK_PAUSE_DURATION
-        end
-    elseif knock_pause_timer > 0 then
-        knock_pause_timer = knock_pause_timer - dt
-        if knock_pause_timer < 0 then knock_pause_timer = 0 end
-    end
+    animations:update(dt)
 
     process_next_queued_message()
 
@@ -668,13 +647,7 @@ function Scene.draw()
 
     player_hand:draw(dragging_card, hovered_card)
 
-    if movable_card_from_opponent_to_discard_pile ~= nil then
-        movable_card_from_opponent_to_discard_pile:draw()
-    end
-
-    if knock_discard_anim ~= nil then
-        knock_discard_anim:draw()
-    end
+    animations:draw()
 
     opponent_hand:draw()
 
