@@ -252,7 +252,7 @@ function form.keypressed(self, key)
         if ctrl_down or self.fresh then
             row.text = ""
         else
-            row.text = string.sub(row.text, 1, #row.text - 1)
+            row.text = ui.remove_last_character(row.text)
         end
         self.fresh = false
         return true

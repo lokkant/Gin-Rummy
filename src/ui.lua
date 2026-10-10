@@ -1,5 +1,6 @@
--- Small helpers shared by the screens: hit testing, a plain rounded button and the hover animation of
--- the deck and the discard pile. Rectangles are tables {x, y, w, h} in window pixels.
+-- Small helpers shared by the screens: hit testing, a plain rounded button, sharp text, deleting the last
+-- character of a typed text and the hover animation of the deck and the discard pile. Rectangles are
+-- tables {x, y, w, h} in window pixels.
 
 local love = require "love"
 
@@ -23,6 +24,22 @@ function ui.next_hover_scale(hover_scale, is_hovered, dt)
     end
 
     return math.max(hover_scale - HOVER_SPEED * dt, 1.0)
+end
+
+-- Returns `text` without its last character. Characters are UTF-8, so one can be several bytes long (a
+-- Cyrillic letter has two): the bytes of the whole character go, never half of one, which would make the
+-- text impossible to draw.
+function ui.remove_last_character(text)
+    local start = #text
+
+    -- bytes 0x80..0xBF continue a character that began earlier
+    while start > 1 do
+        local byte = string.byte(text, start)
+        if byte < 0x80 or byte >= 0xC0 then break end
+        start = start - 1
+    end
+
+    return string.sub(text, 1, start - 1)
 end
 
 -- Rounds a coordinate (in window units) to a whole physical pixel. On a screen with display scaling

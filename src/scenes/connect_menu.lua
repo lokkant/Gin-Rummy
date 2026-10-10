@@ -126,7 +126,7 @@ function Scene.keypressed(key)
         if ctrl_down then
             form.text = delete_last_word(form.text)
         else
-            form.text = string.sub(form.text, 1, #form.text - 1)
+            form.text = ui.remove_last_character(form.text)
         end
         form.error = nil
     elseif key == "v" and ctrl_down then
