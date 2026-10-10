@@ -25,6 +25,9 @@ local KNOCK_BUTTON_WIDTH = 140
 local KNOCK_BUTTON_HEIGHT = 50
 local KNOCK_BUTTON_MARGIN = 30
 
+-- X of the left edge of the stock pile.
+layout.DECK_X = 100
+
 -- Textures are loaded once and shared by every game; nil until first needed.
 local textures
 
@@ -52,13 +55,38 @@ function layout.card_scale()
     return scale / ASSET_RESOLUTION_FACTOR
 end
 
+-- Returns the top of our card row for a window of height h (the same row in the game and the layoff scene).
+function layout.get_hand_y(h)
+    return h * HAND_Y_FRACTION
+end
+
+-- Returns the centre {x, y} of the eye in a window of w x h pixels: opposite the stock pile, as far from the
+-- right edge as the pile is from the left one, level with it. The game and the layoff scene put it there.
+function layout.get_eye_center(w, h)
+    local deck_width = get_textures().deck:getWidth() * layout.card_scale()
+    return {x = w - (layout.DECK_X + deck_width / 2), y = h / 2}
+end
+
+-- Returns the rect {x, y, w, h} of the button at the right edge level with our card row: KNOCK in the game
+-- scene, FINISH in the layoff scene.
+function layout.get_side_button(w, h)
+    local card_height = get_textures().back:getHeight() * layout.card_scale()
+
+    return {
+        x = w - KNOCK_BUTTON_WIDTH - KNOCK_BUTTON_MARGIN,
+        y = layout.get_hand_y(h) + card_height / 2 - KNOCK_BUTTON_HEIGHT / 2,
+        w = KNOCK_BUTTON_WIDTH,
+        h = KNOCK_BUTTON_HEIGHT
+    }
+end
+
 -- Creates the table objects into `state` and lays them out for the current window. The opponent's card
 -- reference is a face-down card that is cloned for every card that flies or sits in the opponent's hand.
 function layout.create(state)
     local loaded = get_textures()
     local card_scale = layout.card_scale()
 
-    state.deck = Deck(100, 0, loaded.deck, card_scale, card_scale)
+    state.deck = Deck(layout.DECK_X, 0, loaded.deck, card_scale, card_scale)
     state.discard_pile = DiscardPile(0, 0, loaded.card_slot, card_scale, card_scale)
     state.player_hand = PlayerHand(0, 0)
     state.opponent_hand = OpponentHand(0, 0)
@@ -76,25 +104,16 @@ function layout.apply(state, w, h)
     local info = state.layout
 
     info.opponent_y = h * OPPONENT_Y_FRACTION
-    info.hand_y = h * HAND_Y_FRACTION
+    info.hand_y = layout.get_hand_y(h)
     info.card_width = info.back_texture:getWidth() * card_scale
     info.card_height = info.back_texture:getHeight() * card_scale
-    -- Right edge minus margin, vertically centred on our card row.
-    info.knock_button = {
-        x = w - KNOCK_BUTTON_WIDTH - KNOCK_BUTTON_MARGIN,
-        y = info.hand_y + info.card_height / 2 - KNOCK_BUTTON_HEIGHT / 2,
-        w = KNOCK_BUTTON_WIDTH,
-        h = KNOCK_BUTTON_HEIGHT
-    }
+    info.knock_button = layout.get_side_button(w, h)
 
     state.deck.scaleX = card_scale
     state.deck.scaleY = card_scale
     state.deck.y = h / 2 - info.deck_texture:getHeight() * card_scale / 2
 
-    -- The eye sits opposite the stock pile: as far from the right edge as the pile is from the left one,
-    -- level with it.
-    local deck_width = info.deck_texture:getWidth() * card_scale
-    info.eye_center = {x = w - (state.deck.x + deck_width / 2), y = h / 2}
+    info.eye_center = layout.get_eye_center(w, h)
 
     state.discard_pile.scaleX = card_scale
     state.discard_pile.scaleY = card_scale

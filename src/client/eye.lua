@@ -179,6 +179,12 @@ local function prepare()
     make_vessels()
 end
 
+-- Size of one pixel of the eye picture on the screen: a whole number, so the enlarged pixels stay square
+-- and equally sized; it follows the window size like the cards do. Used by the scenes that show the eye.
+function eye.get_pixel_size()
+    return math.max(1, math.floor(scale + 0.5))
+end
+
 -- Creates the state of one eye: closed at first, with the iris in the middle. `stress` (0..1) is set from
 -- outside every frame.
 function eye.create()

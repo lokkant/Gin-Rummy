@@ -74,12 +74,6 @@ local function get_active_side(state)
     return state.is_my_turn and "me" or "opponent"
 end
 
--- Size of one pixel of the eye picture on the screen: a whole number, so the enlarged pixels stay square
--- and equally sized; it follows the window size like the cards do.
-local function get_eye_pixel_size()
-    return math.max(1, math.floor(scale + 0.5))
-end
-
 -- The turn timer limits {fade_start, fade_full, ...} in seconds: the ones the server sent with our last
 -- turn, or the ones it would send (config.lua, shortened in later rounds) before we had a turn this round.
 local function get_turn_limits(state)
@@ -181,7 +175,7 @@ function hud.update(state, dt)
 
     local center = state.layout.eye_center
     local mouse_x, mouse_y = love.mouse.getPosition()
-    eye.update(state.eye, dt, is_awake, mouse_x, mouse_y, center.x, center.y, get_eye_pixel_size(), peek_openness)
+    eye.update(state.eye, dt, is_awake, mouse_x, mouse_y, center.x, center.y, eye.get_pixel_size(), peek_openness)
 
     -- Cards sway more; our own stress adds to it, and the opponent's hand gets restless while they take
     -- long: the cards twitch more and the fan spreads.
@@ -216,7 +210,7 @@ end
 -- Draws the eye to the right of the table centre.
 function hud.draw_eye(state)
     local center = state.layout.eye_center
-    eye.draw(state.eye, center.x, center.y, get_eye_pixel_size())
+    eye.draw(state.eye, center.x, center.y, eye.get_pixel_size())
 end
 
 -- Paints the table. While a player is to move the light is over their row (the two rows' lights fade into

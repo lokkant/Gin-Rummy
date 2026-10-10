@@ -1,10 +1,11 @@
 -- Layoff scene (client): shown to BOTH players after a knock that is not a gin. The round is decided, so
--- every card is face up: at the top the knocker's melds (outlined) and leftover cards, at the bottom the
--- defender's hand. The defender drags cards onto the melds to reduce their deadwood and presses FINISH; each
--- placement goes to the server at once (layoff_card) and the knocker sees the same card slide from the
--- defender's hand onto the meld (opponent_layoff). Both leave when the round_result arrives. load() gets the
--- layoff_phase message (protocol: top of server.lua). The scene is left with SceneManager.set("game"), so
--- the game scene keeps its state and then shows the round_result.
+-- every card is face up: at the top the knocker's melds (outlined) and leftover cards, at the bottom (where
+-- our hand is on the table) the defender's hand, and the eye in its usual place. The
+-- defender drags cards onto the melds to reduce their deadwood and presses FINISH; each placement goes to the
+-- server at once (layoff_card) and the knocker sees the same card slide from the defender's hand onto the
+-- meld (opponent_layoff). Both leave when the round_result arrives. load() gets the layoff_phase message
+-- (protocol: top of server.lua). The scene is left with SceneManager.set("game"), so the game scene keeps
+-- its state and then shows the round_result.
 
 require 'card'
 require 'cards_database'
@@ -17,6 +18,8 @@ local ui = require "ui"
 local felt = require "client/felt"
 local layout = require "client/layout"
 local sounds = require "client/sounds"
+local eye = require "client/eye"
+local horror = require "client/horror"
 
 local Scene = {}
 
@@ -45,26 +48,31 @@ local is_submitted = false
 -- The scene was left (the game scene runs again); nothing is updated after that.
 local is_left = false
 
--- Cards here are a bit smaller than on the table so that three melds, the leftovers and the hand fit.
-local CARD_SCALE_FACTOR = 0.85
+-- Cards here are as big as on the table (1 = the same scale).
+local CARD_SCALE_FACTOR = 1
 -- Horizontal shift between neighbouring cards of a meld as a part of the card width; it shrinks (down to
 -- MIN_MELD_OVERLAP) when the top row would not fit the window.
 local MELD_OVERLAP = 0.55
-local MIN_MELD_OVERLAP = 0.25
--- Gap between two groups (meld / leftovers) in the top row, in pixels.
-local GROUP_GAP = 60
--- Y of the top row and the distance between the bottom row and the window bottom.
+local MIN_MELD_OVERLAP = 0.2
+-- Gap between two groups (meld / leftovers) in the top row, as a part of the card width (at most
+-- MAX_GROUP_GAP pixels).
+local GROUP_GAP_FACTOR = 0.3
+local MAX_GROUP_GAP = 60
+-- Y of the top row.
 local TOP_Y = 110
-local BOTTOM_MARGIN = 110
--- Hand cards are shifted by this part of the card width.
-local HAND_OVERLAP = 0.65
+-- Hand cards are shifted by this part of the card width, like the hand on the table (2/3).
+local HAND_OVERLAP = 1 / 1.5
 -- A meld counts as hit by a drop when the cursor is within this many pixels of its rectangle.
 local DROP_MARGIN = 25
 
-local FINISH_BUTTON_WIDTH = 200
-local FINISH_BUTTON_HEIGHT = 50
 local FINISH_COLOR = {0.3, 0.6, 0.3, 1}
+-- The FINISH button (where the KNOCK button is on the table) and the gap between two groups of the top
+-- row: both set by compute_layout.
 local finish_button
+local group_gap = MAX_GROUP_GAP
+
+-- The eye (see client/eye.lua): awake while the defender can still move cards.
+local eye_state
 
 local title_font
 local label_font
@@ -130,7 +138,7 @@ end
 
 -- Returns the width of the top row (all groups side by side) for a given overlap factor.
 local function get_top_row_width(groups, card_w, overlap_factor)
-    local width = GROUP_GAP * (#groups - 1)
+    local width = group_gap * (#groups - 1)
     for _, group in ipairs(groups) do
         width = width + card_w * overlap_factor * (#group.cards - 1) + card_w
     end
@@ -139,7 +147,7 @@ end
 
 -- Computes each card's target position; the movement itself happens smoothly in Scene.update via
 -- card:move_to (this is also what makes a laid-off card fly onto its meld). Top row: the melds and then the
--- leftovers, centred; bottom row: the hand.
+-- leftovers, centred; bottom row: the hand, where our hand is on the table.
 local function compute_layout()
     local w = love.graphics.getWidth()
     local h = love.graphics.getHeight()
@@ -153,8 +161,10 @@ local function compute_layout()
     local card_h = sample:get_height()
 
     -- Squeeze the melds together until the whole row fits the window.
+    group_gap = math.min(MAX_GROUP_GAP, card_w * GROUP_GAP_FACTOR)
     local overlap_factor = MELD_OVERLAP
-    while overlap_factor > MIN_MELD_OVERLAP and get_top_row_width(groups, card_w, overlap_factor) > w - 80 do
+    while overlap_factor > MIN_MELD_OVERLAP and
+          get_top_row_width(groups, card_w, overlap_factor) > w - 80 do
         overlap_factor = overlap_factor - 0.05
     end
 
@@ -170,13 +180,13 @@ local function compute_layout()
             card.target_y = group.y
         end
 
-        x = x + group.width + GROUP_GAP
+        x = x + group.width + group_gap
     end
 
     if #hand > 0 then
         local step = card_w * HAND_OVERLAP
         local start_x = (w - (step * (#hand - 1) + card_w)) / 2
-        local hand_y = h - card_h - BOTTOM_MARGIN
+        local hand_y = layout.get_hand_y(h)
 
         for i, card in ipairs(hand) do
             local target_y = hand_y
@@ -192,12 +202,7 @@ local function compute_layout()
         end
     end
 
-    finish_button = {
-        x = w / 2 - FINISH_BUTTON_WIDTH / 2,
-        y = h - 80,
-        w = FINISH_BUTTON_WIDTH,
-        h = FINISH_BUTTON_HEIGHT
-    }
+    finish_button = layout.get_side_button(w, h)
 end
 
 -- Puts every card exactly on its target (used once after loading, so nothing flies in at the start).
@@ -295,14 +300,19 @@ local function apply_opponent_layoff(message)
 end
 
 -- Scene entry, called by SceneManager.switch("layoff", layoff_phase_message) from the game scene.
--- Everything is rebuilt from scratch with fresh textured cards.
-function Scene.load(info)
+-- Everything is rebuilt from scratch with fresh textured cards. `is_correction` (true when the server sent a
+-- layoff_sync) keeps the eye as it is instead of closing it.
+function Scene.load(info, is_correction)
     if title_font == nil then
         title_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 28)
         label_font = love.graphics.newFont("ArchivoBlack-Regular.ttf", 22)
     end
 
     role = info.role
+
+    if eye_state == nil or not is_correction then
+        eye_state = eye.create()
+    end
 
     melds = {}
     for _, meld_names in ipairs(info.combinations) do
@@ -412,6 +422,11 @@ function Scene.update(dt)
 
     compute_layout()
 
+    local eye_center = layout.get_eye_center(love.graphics.getWidth(), love.graphics.getHeight())
+    local mouse_x, mouse_y = love.mouse.getPosition()
+    eye.update(eye_state, dt, role == "defender" and not is_submitted, mouse_x, mouse_y, eye_center.x,
+               eye_center.y, eye.get_pixel_size())
+
     each_card(function(card)
         if card ~= dragging_card then
             card:move_to(dt, layout.CARD_SPEED, card.target_x, card.target_y)
@@ -433,7 +448,7 @@ function Scene.update(dt)
     while correction do
         local newer = network.take("layoff_sync")
         if newer == nil then
-            Scene.load(correction)
+            Scene.load(correction, true)
             sounds.play_failure()
             return
         end
@@ -447,105 +462,97 @@ function Scene.update(dt)
     end
 end
 
--- True if `card` is in the hand (not in a meld or the leftovers).
-local function is_in_hand(card)
-    for _, hand_card in ipairs(hand) do
-        if hand_card == card then return true end
+-- Returns the number of the knocker's meld that holds `card`, or nil (the leftovers and the hand have none).
+local function get_meld_index(card)
+    for index, meld in ipairs(melds) do
+        for _, meld_card in ipairs(meld.cards) do
+            if meld_card == card then return index end
+        end
     end
-    return false
+    return nil
 end
 
--- Draws a card of the hand the way the table draws it: melded cards with the outline of their meld, the
--- deadwood with the plain shimmer. Leaves the shader set (draw_group and Scene.draw reset it).
-local function draw_hand_card(card)
-    local meld_index = hand_meld_of[card]
+-- Draws one card the way the table does: a melded card with the outline of its meld, any other card with the
+-- plain shimmer; the hovered and the dragged card get their shine on top, and every card sways like on the
+-- table (nervousness). Leaves the shader set (the callers reset it).
+local function draw_card(card, meld_index, nervousness)
+    local time = love.timer.getTime()
+    local is_special = card == hovered_card or card == dragging_card
 
     if meld_index then
-        love.graphics.setShader(highlight_card_shader)
-        highlight_card_shader:send("time", love.timer.getTime())
-        highlight_card_shader:send("highlight_color", combination_colors[meld_index])
+        local shader = is_special and highlight_hovered_card_shader or highlight_card_shader
+        love.graphics.setShader(shader)
+        shader:send("time", time)
+        shader:send("highlight_color", combination_colors[meld_index])
+    elseif card == dragging_card then
+        love.graphics.setShader(dragging_card_shader)
+        dragging_card_shader:send("time", time)
+    elseif card == hovered_card then
+        love.graphics.setShader(hovered_card_shader)
+        hovered_card_shader:send("time", time)
     else
         love.graphics.setShader(card_shader)
-        card_shader:send("time", love.timer.getTime())
+        card_shader:send("time", time)
     end
 
-    card:draw(true)
+    card:draw(true, nervousness)
 end
 
--- Draws a group of cards with the outline shader in the colour of its meld (nil index: no outline).
-local function draw_group(group, meld_index)
-    if meld_index then
-        love.graphics.setShader(highlight_card_shader)
-        highlight_card_shader:send("time", love.timer.getTime())
-        highlight_card_shader:send("highlight_color", combination_colors[meld_index])
-    end
-
+-- Draws the settled cards of a group (the dragged one is drawn last by Scene.draw).
+local function draw_group(group, meld_index, nervousness)
     for _, card in ipairs(group.cards) do
         if card ~= dragging_card and card.x == card.target_x and card.y == card.target_y then
-            card:draw(true)
+            draw_card(card, meld_index, nervousness)
         end
     end
 
     love.graphics.setShader()
 end
 
--- Draws the table (both hands are open, so both are lit), the captions, the settled cards (melds
--- outlined), the cards that are still flying and the dragged card on top of everything, and the FINISH
--- button for the defender.
+-- Draws the table (both hands are open, so both are lit), the eye, the title, then the cards in the order of
+-- the table: the knocker's melds and leftovers, the hand from left to right (the dragged card is drawn in its
+-- place in that order: over the cards to its left and over the opponent's cards, under the cards to its
+-- right, like in the hand on the table) and the cards that are still flying; the FINISH button for the
+-- defender comes on top.
 function Scene.draw()
     felt.draw(felt.OPEN_LIGHTS)
 
+    local eye_center = layout.get_eye_center(love.graphics.getWidth(), love.graphics.getHeight())
+    eye.draw(eye_state, eye_center.x, eye_center.y, eye.get_pixel_size())
+
     local w = love.graphics.getWidth()
-    local top_caption, bottom_caption, title
+    local title
 
     if role == "defender" then
         title = is_submitted and "Counting the score..." or "Drag your cards onto the melds to lay them off"
-        top_caption = "Opponent's cards"
-        bottom_caption = "Your hand"
     else
         title = "Your opponent is laying off cards onto your melds..."
-        top_caption = "Your cards"
-        bottom_caption = "Opponent's hand"
     end
 
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.setFont(title_font)
     love.graphics.printf(title, 0, 30, w, "center")
 
-    love.graphics.setFont(label_font)
-    love.graphics.printf(top_caption, 0, TOP_Y - 34, w, "center")
-    if #hand > 0 then
-        love.graphics.printf(bottom_caption, 0, hand[1].rest_y - 34, w, "center")
-    end
+    local nervousness = horror.multiplier("card_nervousness")
 
     for i, meld in ipairs(melds) do
-        draw_group(meld, i)
+        draw_group(meld, i, nervousness)
     end
-    draw_group(leftovers, nil)
+    draw_group(leftovers, nil, nervousness)
     for _, card in ipairs(hand) do
-        if card ~= dragging_card and card.x == card.target_x and card.y == card.target_y then
-            draw_hand_card(card)
+        if card == dragging_card or (card.x == card.target_x and card.y == card.target_y) then
+            draw_card(card, hand_meld_of[card], nervousness)
         end
     end
     love.graphics.setShader()
 
-    -- Cards in flight are drawn over the settled ones, the dragged card over everything. Cards of the hand
-    -- keep their outline while they slide to a new place.
+    -- Cards in flight are drawn over the settled ones.
     each_card(function(card)
         if card ~= dragging_card and (card.x ~= card.target_x or card.y ~= card.target_y) then
-            if is_in_hand(card) then
-                draw_hand_card(card)
-                love.graphics.setShader()
-            else
-                card:draw(true)
-            end
+            draw_card(card, hand_meld_of[card] or get_meld_index(card), nervousness)
         end
     end)
-
-    if dragging_card ~= nil then
-        draw_hand_card(dragging_card)
-        love.graphics.setShader()
-    end
+    love.graphics.setShader()
 
     if role == "defender" and not is_submitted then
         love.graphics.setFont(label_font)
