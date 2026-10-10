@@ -28,8 +28,10 @@ local role
 local melds = {}
 -- The knocker's leftover cards, in the same shape as a meld (but nothing can be laid onto them).
 local leftovers = {cards = {}}
--- The defender's hand as Card objects; laid off cards leave it.
+-- The defender's hand as Card objects; laid off cards leave it. hand_meld_of[card] is the number of the
+-- meld of the hand's best arrangement the card belongs to (nil for deadwood); it sets the outline colour.
 local hand = {}
+local hand_meld_of = {}
 
 -- Drag state: the dragged card and where it was grabbed; hovered_card is the hand card lifted by the
 -- cursor.
@@ -96,6 +98,34 @@ local function each_card(fn)
     end
     for _, card in ipairs(leftovers.cards) do fn(card) end
     for _, card in ipairs(hand) do fn(card) end
+end
+
+-- Arranges the hand like the player's own hand on the table: finds the best meld arrangement, puts the
+-- melded cards first (meld 1, 2, 3, each sorted) and the deadwood after them by rank and suit, and
+-- remembers which meld each card is in (hand_meld_of). Called whenever the hand changes.
+local function arrange_hand()
+    hand_meld_of = {}
+    sort_cards(hand)
+    if #hand == 0 then return end
+
+    local arrangements = best_combinations(hand)
+    for i, meld in ipairs(arrangements[1]) do
+        for _, card in ipairs(meld) do
+            hand_meld_of[card] = i
+        end
+    end
+
+    table.sort(hand, function(a, b)
+        -- Priority 4 puts deadwood after the (at most three) melds.
+        local priority_a = hand_meld_of[a] or 4
+        local priority_b = hand_meld_of[b] or 4
+
+        if priority_a ~= priority_b then
+            return priority_a < priority_b
+        end
+
+        return a:is_lesser_than(b)
+    end)
 end
 
 -- Returns the width of the top row (all groups side by side) for a given overlap factor.
@@ -239,6 +269,7 @@ local function move_card_to_meld(card, meld_index)
 
     table.insert(meld.cards, card)
     sort_cards(meld.cards)
+    arrange_hand()
     return true
 end
 
@@ -283,7 +314,7 @@ function Scene.load(info)
     sort_cards(leftovers.cards)
 
     hand = new_cards(info.defender_hand)
-    sort_cards(hand)
+    arrange_hand()
 
     dragging_card = nil
     hovered_card = nil
@@ -416,6 +447,31 @@ function Scene.update(dt)
     end
 end
 
+-- True if `card` is in the hand (not in a meld or the leftovers).
+local function is_in_hand(card)
+    for _, hand_card in ipairs(hand) do
+        if hand_card == card then return true end
+    end
+    return false
+end
+
+-- Draws a card of the hand the way the table draws it: melded cards with the outline of their meld, the
+-- deadwood with the plain shimmer. Leaves the shader set (draw_group and Scene.draw reset it).
+local function draw_hand_card(card)
+    local meld_index = hand_meld_of[card]
+
+    if meld_index then
+        love.graphics.setShader(highlight_card_shader)
+        highlight_card_shader:send("time", love.timer.getTime())
+        highlight_card_shader:send("highlight_color", combination_colors[meld_index])
+    else
+        love.graphics.setShader(card_shader)
+        card_shader:send("time", love.timer.getTime())
+    end
+
+    card:draw(true)
+end
+
 -- Draws a group of cards with the outline shader in the colour of its meld (nil index: no outline).
 local function draw_group(group, meld_index)
     if meld_index then
@@ -466,17 +522,29 @@ function Scene.draw()
         draw_group(meld, i)
     end
     draw_group(leftovers, nil)
-    draw_group({cards = hand}, nil)
+    for _, card in ipairs(hand) do
+        if card ~= dragging_card and card.x == card.target_x and card.y == card.target_y then
+            draw_hand_card(card)
+        end
+    end
+    love.graphics.setShader()
 
-    -- Cards in flight are drawn over the settled ones, the dragged card over everything.
+    -- Cards in flight are drawn over the settled ones, the dragged card over everything. Cards of the hand
+    -- keep their outline while they slide to a new place.
     each_card(function(card)
         if card ~= dragging_card and (card.x ~= card.target_x or card.y ~= card.target_y) then
-            card:draw(true)
+            if is_in_hand(card) then
+                draw_hand_card(card)
+                love.graphics.setShader()
+            else
+                card:draw(true)
+            end
         end
     end)
 
     if dragging_card ~= nil then
-        dragging_card:draw(true)
+        draw_hand_card(dragging_card)
+        love.graphics.setShader()
     end
 
     if role == "defender" and not is_submitted then
