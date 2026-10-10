@@ -30,12 +30,20 @@ local MAX_LOOK_X = 14
 local MAX_LOOK_Y = 7
 -- Eye pixels the iris moves per eye pixel the cursor is away from the eye's centre.
 local LOOK_SENSITIVITY = 0.18
--- How fast the iris follows the cursor and how fast the eyelids move (per second).
+-- How fast the iris follows the cursor and how fast the eyelids move (per second): opening to look at the
+-- cursor, opening only a slit (a peek), closing. The remaining distance shrinks by this factor each second.
 local LOOK_SPEED = 18
 local OPEN_SPEED = 9
+local PEEK_OPEN_SPEED = 3.5
+local CLOSE_SPEED = 5
+-- The lids never move slower than this (openness units per second), so the last bit of closing does not
+-- drag on.
+local MIN_LID_SPEED = 0.5
 
+-- Below this openness the columns where the slit is thinner than a pixel are drawn as the lid line.
+local LID_LINE_BELOW = 0.1
 -- Below this openness the eye is drawn as the closed (sleeping) line instead of a thin slit.
-local CLOSED_BELOW = 0.12
+local CLOSED_BELOW = 0.03
 -- Seconds a blink lasts, and the range of seconds between two blinks.
 local BLINK_DURATION = 0.18
 local BLINK_MIN_PAUSE = 2
@@ -67,7 +75,10 @@ local HIGHLIGHT = {1, 1, 1}
 local image_data
 local image
 -- opening_height[x] = half height of the opening in column x when fully open (0 at both corners).
+-- closed_droop[x] = how many pixels below the middle row the closed lid line lies in column x (the line is
+-- an arc that sags in the middle); a closing eye slides its slit down onto that line.
 local opening_height = {}
+local closed_droop = {}
 -- The vessels live on the eyeball, so their pixels are stored relative to the centre of the iris, not to
 -- the picture: wherever the iris looks, the same pattern moves with it. VESSEL_RANGE_X / _Y are the
 -- largest offsets that are stored (a bit more than the opening, so there is something to show when the
@@ -162,6 +173,7 @@ local function prepare()
     for x = 0, WIDTH - 1 do
         local t = (x - CENTER_X) / CENTER_X
         opening_height[x] = math.floor(OPENING_HEIGHT * (1 - t * t) ^ 0.7 + 0.5)
+        closed_droop[x] = math.floor(4 * (1 - t * t) ^ 0.8 + 0.5)
     end
 
     make_vessels()
@@ -191,7 +203,20 @@ end
 -- far and the eye looks up, as if watching the opponent's cards through a slit.
 function eye.update(self, dt, is_awake, mouse_x, mouse_y, screen_x, screen_y, pixel_size, peek_openness)
     local target_openness = is_awake and 1 or (peek_openness or 0)
-    self.openness = self.openness + (target_openness - self.openness) * math.min(1, dt * OPEN_SPEED)
+    local delta = target_openness - self.openness
+
+    -- Opening is quicker than closing, a peek opens slowly, and a minimum speed finishes the move.
+    local speed = CLOSE_SPEED
+    if delta > 0 then
+        speed = is_awake and OPEN_SPEED or PEEK_OPEN_SPEED
+    end
+
+    local step = delta * math.min(1, dt * speed)
+    local min_step = math.min(math.abs(delta), MIN_LID_SPEED * dt)
+    if math.abs(step) < min_step then
+        step = delta > 0 and min_step or -min_step
+    end
+    self.openness = self.openness + step
 
     if is_awake and self.openness > 0.95 then
         self.blink_timer = self.blink_timer - dt
@@ -209,6 +234,9 @@ function eye.update(self, dt, is_awake, mouse_x, mouse_y, screen_x, screen_y, pi
     elseif peek_openness then
         -- half open and looking up: towards the opponent's cards at the top of the table
         target_y = -MAX_LOOK_Y
+    elseif self.openness > CLOSED_BELOW then
+        -- the lids are still closing: the gaze stays where it was and goes out of sight with them
+        target_x, target_y = self.look_x, self.look_y
     end
 
     local follow = math.min(1, dt * LOOK_SPEED)
@@ -221,8 +249,7 @@ end
 local function get_closed_color(x, y)
     if opening_height[x] < 1 then return nil end
 
-    local t = (x - CENTER_X) / CENTER_X
-    local line_y = CENTER_Y + math.floor(4 * (1 - t * t) ^ 0.8 + 0.5)
+    local line_y = CENTER_Y + closed_droop[x]
 
     if y == line_y or y == line_y - 1 then
         return OUTLINE
@@ -241,7 +268,17 @@ end
 -- reddens the eye and `time` (seconds) animates the fire of the iris.
 local function get_open_color(x, y, openness, iris_x, iris_y, stress, time)
     local visible = opening_height[x] * openness
-    local dy = y - CENTER_Y
+    -- A closing eye lowers its slit onto the line of the closed eye, so that it ends up where the sleeping
+    -- eye is drawn (squared: the lids come together mostly in the last part).
+    local lowered = math.floor(closed_droop[x] * (1 - openness) ^ 2 + 0.5)
+    local dy = y - (CENTER_Y + lowered)
+
+    -- Where the slit has become thinner than a pixel while the eye is nearly shut, the lids have met: two
+    -- rows of lid line, the same as the sleeping eye (so the last frames of closing look like it).
+    if openness < LID_LINE_BELOW and visible < 1 then
+        if opening_height[x] >= 1 and (dy == 0 or dy == -1) then return OUTLINE end
+        return nil
+    end
     local abs_dy = math.abs(dy)
 
     if abs_dy > visible + 1 then return nil end
@@ -314,7 +351,9 @@ local function render(self)
     local time = love.timer.getTime()
     local is_closed = openness < CLOSED_BELOW
     local iris_x = CENTER_X + math.floor(self.look_x + 0.5)
-    local iris_y = CENTER_Y + math.floor(self.look_y + 0.5)
+    -- the iris sinks with the lowered slit (see get_open_color)
+    local sink = math.floor(closed_droop[CENTER_X] * (1 - openness) ^ 2 + 0.5)
+    local iris_y = CENTER_Y + math.floor(self.look_y + 0.5) + sink
 
     for y = 0, HEIGHT - 1 do
         for x = 0, WIDTH - 1 do

@@ -20,8 +20,11 @@ local config = require "config"
 
 local hud = {}
 
--- How fast the opponent's fan spreads and closes again (per second, like LIGHT_SPEED).
-local RESTLESS_SPEED = 3
+-- How fast the opponent's fan spreads and closes again (per second, like LIGHT_SPEED). Slow on purpose: the
+-- cards drift apart and back instead of snapping.
+local RESTLESS_SPEED = 1.2
+-- How much more the opponent's cards sway at full restlessness (1 = twice as much as usual).
+local RESTLESS_SWAY_EXTRA = 1
 -- How fast the light follows the turn (per second; the remaining distance shrinks by this factor).
 local LIGHT_SPEED = 6
 
@@ -188,9 +191,12 @@ function hud.update(state, dt)
     end
     if state.opponent_hand then
         local restlessness = horror.is_on("opponent_restlessness") and opponent_stress or 0
-        state.opponent_hand.nervousness = nervousness * (1 + 2 * restlessness)
         local current = state.opponent_hand.restlessness
-        state.opponent_hand.restlessness = current + (restlessness - current) * math.min(1, dt * RESTLESS_SPEED)
+        current = current + (restlessness - current) * math.min(1, dt * RESTLESS_SPEED)
+        state.opponent_hand.restlessness = current
+
+        -- the sway follows the smoothed value, so it never jumps when the opponent moves
+        state.opponent_hand.nervousness = nervousness * (1 + RESTLESS_SWAY_EXTRA * current)
     end
 
     watchers.update(state.watchers, dt, state)

@@ -115,7 +115,7 @@ local config = {
     eye_peek_interval_min = 20,
     eye_peek_interval_max = 45,
     eye_peek_duration = 2,
-    eye_peek_openness = 0.22,
+    eye_peek_openness = 0.4,
 
     -- The opponent's heart: in their turn, after they hesitated for the same time as ours would, a duller
     -- heartbeat is heard from one side, faster the longer they take. opponent_heartbeat_volume is relative
